@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <style>
+            /* basic reset */
+            * {
+                margin: 0;
+                padding: 0;
+            }
+
+            body {
+                background: black;
+                overflow: hidden;
+                height: 100vh;
+            }
+
+            canvas {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+
+        <canvas id="c"></canvas>
+
+        <script>
+        // getting canvas by id c
+        var c = document.getElementById("c");
+        var ctx = c.getContext("2d");
+
+        // making the canvas full screen
+        c.height = window.innerHeight;
+        c.width = window.innerWidth;
+
+        // characters for the matrix rain
+        var matrix = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
+        matrix = matrix.split("");
+
+        var font_size = 16;
+        var columns = c.width/font_size; // number of columns for the rain
+        var drops = []; // array of drops - one per column
+
+        // initialize all drops
+        for(var x = 0; x < columns; x++) {
+            drops[x] = 1;
+        }
+
+        // Gradient colors for INNOFORCE
+        var gradientColors = [
+            [91, 85, 193],    // Фиолетово-синий
+            [83, 167, 253],   // Ярко-голубой
+            [39, 229, 215],   // Бирюзовый
+            [3, 180, 125]     // Зеленый
+        ];
+
+        // Get smooth gradient color based on position
+        function getSmoothGradientColor(position) {
+            // position от 0 до 1 (для плавного перехода)
+            var segmentCount = gradientColors.length - 1;
+            var segmentPosition = position * segmentCount;
+            var segmentIndex = Math.floor(segmentPosition);
+            var segmentOffset = segmentPosition - segmentIndex;
+            
+            // Получаем два ближайших цвета для интерполяции
+            var color1 = gradientColors[segmentIndex];
+            var color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)];
+            
+            // Интерполяция между цветами
+            var r = Math.round(color1[0] + segmentOffset * (color2[0] - color1[0]));
+            var g = Math.round(color1[1] + segmentOffset * (color2[1] - color1[1]));
+            var b = Math.round(color1[2] + segmentOffset * (color2[2] - color1[2]));
+            
+            return "rgb(" + r + ", " + g + ", " + b + ")";
+        }
+
+        // Letters for INNOFORCE to be displayed
+        var word = "INNOFORCE";
+        var wordArea = {}; // Area where the word should appear
+        var mode = "rain"; // possible modes: "rain", "forming", "showing", "dissolving"
+        var modeStartTime = Date.now();
+        var formationDuration = 2000; // time to form the word (2 seconds)
+        var showDuration = 3000; // time to show the word (3 seconds)
+        var dissolveDuration = 2000; // time to dissolve back to rain (2 seconds)
+        var rainDuration = 5000; // time for rain (5 seconds)
+
+        // For marking which positions are part of the word
+        var wordGrid = [];
+
+        // Calculate the area where the word should appear
+        function calculateWordArea() {
+            var wordFontSize = font_size * 6; // Make the word 6 times larger
+            var wordWidth = word.length * wordFontSize;
+            var startX = Math.floor((c.width - wordWidth) / 2);
+            var centerY = Math.floor(c.height / 2);
+            
+            wordArea = {
+                startX: startX,
+                startY: centerY - wordFontSize,
+                width: wordWidth,
+                height: wordFontSize * 1.5,
+                fontSize: wordFontSize
+            };
+            
+            // Initialize the word grid to track which positions are part of which letter
+            initWordGrid();
+        }
+        
+        // Initialize the grid that marks where each letter of the word should be
+        function initWordGrid() {
+            wordGrid = new Array(columns);
+            for (var i = 0; i < columns; i++) {
+                wordGrid[i] = new Array(Math.ceil(c.height / font_size)).fill(null);
+            }
+            
+            var wordFontSize = wordArea.fontSize;
+            
+            // For each letter in INNOFORCE
+            for (var i = 0; i < word.length; i++) {
+                var letterX = wordArea.startX + i * wordFontSize;
+                var letterY = wordArea.startY + wordFontSize;
+                var letterWidth = wordFontSize * 0.8;
+                var letterHeight = wordFontSize;
+                
+                // Mark the area of this letter in the grid
+                for (var x = 0; x < columns; x++) {
+                    var posX = x * font_size;
+                    if (posX >= letterX && posX < letterX + letterWidth) {
+                        for (var y = 0; y < Math.ceil(c.height / font_size); y++) {
+                            var posY = y * font_size;
+                            if (posY >= letterY - letterHeight && posY < letterY) {
+                                wordGrid[x][y] = {
+                                    letter: word[i], // Use the actual letter from the word
+                                    index: i
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Drawing function
+        function draw() {
+            // Check if we need to change modes
+            var currentTime = Date.now();
+            var elapsed = currentTime - modeStartTime;
+
+            if (mode === "rain" && elapsed >= rainDuration) {
+                mode = "forming";
+                modeStartTime = currentTime;
+                calculateWordArea();
+            } else if (mode === "forming" && elapsed >= formationDuration) {
+                mode = "showing";
+                modeStartTime = currentTime;
+            } else if (mode === "showing" && elapsed >= showDuration) {
+                mode = "dissolving";
+                modeStartTime = currentTime;
+            } else if (mode === "dissolving" && elapsed >= dissolveDuration) {
+                mode = "rain";
+                modeStartTime = currentTime;
+            }
+
+            // Black BG with translucent fill for the trail effect
+            ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+            ctx.fillRect(0, 0, c.width, c.height);
+
+            ctx.font = font_size + "px monospace";
+
+            // Handle different modes
+            if (mode === "rain") {
+                drawRain();
+            } else if (mode === "forming") {
+                drawForming(elapsed / formationDuration);
+            } else if (mode === "showing") {
+                drawShowing();
+            } else if (mode === "dissolving") {
+                drawDissolving(elapsed / dissolveDuration);
+            }
+        }
+
+        // Drawing the matrix rain
+        function drawRain() {
+            ctx.fillStyle = "#0F0"; // green text
+
+            for(var i = 0; i < drops.length; i++) {
+                // A random character to print
+                var text = matrix[Math.floor(Math.random() * matrix.length)];
+                ctx.fillText(text, i * font_size, drops[i] * font_size);
+
+                // Sending the drop back to the top randomly after it has crossed the screen
+                if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                // Incrementing Y coordinate
+                drops[i]++;
+            }
+        }
+
+        // Drawing the formation of the word
+        function drawForming(progress) {
+            // Draw standard rain with special treatment for the word area
+            for(var i = 0; i < drops.length; i++) {
+                var columnIndex = i;
+                var rowIndex = Math.floor(drops[i]);
+                
+                // Check if this position is part of the word
+                var isPartOfWord = rowIndex < wordGrid[columnIndex].length && wordGrid[columnIndex][rowIndex] !== null;
+                
+                if (isPartOfWord && Math.random() < progress * 2) {
+                    // This position is part of a letter in INNOFORCE
+                    var letterInfo = wordGrid[columnIndex][rowIndex];
+                    var normalizedPos = letterInfo.index / (word.length - 1);
+                    ctx.fillStyle = getSmoothGradientColor(normalizedPos);
+                    
+                    // Use the actual letter from the word instead of a random character
+                    // This is the key change - we use the letter that this position is part of
+                    ctx.fillText(letterInfo.letter, columnIndex * font_size, rowIndex * font_size);
+                    
+                    // Slow down or stop drops that are part of the word as formation progresses
+                    if (Math.random() < progress * 2) {
+                        // If random check passes, don't move this drop at all
+                        continue;
+                    } else {
+                        // Otherwise, move it very slowly
+                        drops[i] += Math.random() * (1 - progress * 0.9);
+                    }
+                } else {
+                    // Standard rain character
+                    ctx.fillStyle = "#0F0"; // standard green
+                    var text = matrix[Math.floor(Math.random() * matrix.length)];
+                    ctx.fillText(text, columnIndex * font_size, drops[i] * font_size);
+                    
+                    // Normal drop behavior
+                    if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    } else {
+                        drops[i]++;
+                    }
+                }
+            }
+        }
+
+        // Drawing the word fully shown
+        function drawShowing() {
+            // Draw standard rain but with the word fully formed
+            for(var i = 0; i < drops.length; i++) {
+                var columnIndex = i;
+                var rowIndex = Math.floor(drops[i]);
+                
+                // Check if this position is part of the word
+                var isPartOfWord = rowIndex < wordGrid[columnIndex].length && wordGrid[columnIndex][rowIndex] !== null;
+                
+                if (isPartOfWord) {
+                    // This position is part of a letter in INNOFORCE
+                    var letterInfo = wordGrid[columnIndex][rowIndex];
+                    var normalizedPos = letterInfo.index / (word.length - 1);
+                    
+                    // Use gradient color for the letter
+                    ctx.fillStyle = getSmoothGradientColor(normalizedPos);
+                    
+                    // Draw the letter that this position is part of
+                    ctx.fillText(letterInfo.letter, columnIndex * font_size, rowIndex * font_size);
+                    
+                    // Don't move drops that are part of the word
+                    continue;
+                } else {
+                    // Standard rain for non-word positions, but semi-transparent
+                    ctx.fillStyle = "rgba(0, 255, 0, 0.5)"; // more transparent green
+                    var text = matrix[Math.floor(Math.random() * matrix.length)];
+                    ctx.fillText(text, columnIndex * font_size, drops[i] * font_size);
+                    
+                    // Normal drop behavior
+                    if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    } else {
+                        drops[i]++;
+                    }
+                }
+            }
+        }
+
+        // Drawing the dissolving of the word back to rain
+        function drawDissolving(progress) {
+            // Draw with word gradually returning to normal rain
+            for(var i = 0; i < drops.length; i++) {
+                var columnIndex = i;
+                var rowIndex = Math.floor(drops[i]);
+                
+                // Check if this position is part of the word
+                var isPartOfWord = rowIndex < wordGrid[columnIndex].length && wordGrid[columnIndex][rowIndex] !== null;
+                
+                if (isPartOfWord && Math.random() > progress * 1.5) {
+                    // Some of the word characters remain, but fewer as progress increases
+                    var letterInfo = wordGrid[columnIndex][rowIndex];
+                    var normalizedPos = letterInfo.index / (word.length - 1);
+                    
+                    // Gradient color with fading opacity
+                    var color = getSmoothGradientColor(normalizedPos);
+                    var fadeColor = color.replace('rgb', 'rgba').replace(')', ', ' + (1 - progress) + ')');
+                    ctx.fillStyle = fadeColor;
+                    
+                    // Draw the letter that this position is part of
+                    ctx.fillText(letterInfo.letter, columnIndex * font_size, rowIndex * font_size);
+                    
+                    // Start moving again as dissolution progresses
+                    if (Math.random() < progress) {
+                        drops[i] += Math.random() * progress * 2;
+                    }
+                } else {
+                    // Standard rain character
+                    var text = matrix[Math.floor(Math.random() * matrix.length)];
+                    
+                    // Gradually transition color back to standard green
+                    ctx.fillStyle = "rgba(0, " + Math.floor(80 + 175 * progress) + ", 0, 0.5)";
+                    ctx.fillText(text, columnIndex * font_size, drops[i] * font_size);
+                    
+                    // Normal drop behavior
+                    if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    } else {
+                        drops[i]++;
+                    }
+                }
+            }
+        }
+
+        // Window resize handler
+        window.addEventListener('resize', function() {
+            c.height = window.innerHeight;
+            c.width = window.innerWidth;
+            columns = c.width/font_size;
+
+            // Reinitialize drops when window is resized
+            drops = [];
+            for(var x = 0; x < columns; x++) {
+                drops[x] = 1;
+            }
+
+            if (mode !== "rain") {
+                calculateWordArea();
+            }
+        });
+
+        // Start the animation
+        setInterval(draw, 33); // ~30fps
+        </script>
+    </body>
+</html>

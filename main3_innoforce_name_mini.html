@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <style>
+            /* basic reset */
+            * {
+                margin: 0;
+                padding: 0;
+            }
+
+            body {
+                background: black;
+                overflow: hidden;
+                height: 100vh;
+            }
+
+            canvas {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+
+        <canvas id="c"></canvas>
+
+        <script>
+        // getting canvas by id c
+        var c = document.getElementById("c");
+        var ctx = c.getContext("2d");
+
+        // making the canvas full screen
+        c.height = window.innerHeight;
+        c.width = window.innerWidth;
+
+        // characters for the matrix rain
+        var matrix = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
+        matrix = matrix.split("");
+
+        var font_size = 16;
+        var columns = c.width/font_size; // number of columns for the rain
+        var drops = []; // array of drops - one per column
+
+        // initialize all drops
+        for(var x = 0; x < columns; x++) {
+            drops[x] = 1;
+        }
+
+        // Letters for INNOFORCE to be displayed
+        var word = "INNOFORCE";
+        var wordPositions = [];
+        var isShowingWord = false;
+        var mode = "rain"; // possible modes: "rain", "forming", "showing", "dissolving"
+        var modeStartTime = Date.now();
+        var formationDuration = 2000; // time to form the word (2 seconds)
+        var showDuration = 3000; // time to show the word (3 seconds)
+        var dissolveDuration = 2000; // time to dissolve back to rain (2 seconds)
+        var rainDuration = 5000; // time for rain (5 seconds)
+
+        // Calculate positions for the word
+        function calculateWordPositions() {
+            var wordWidth = word.length * font_size;
+            var startX = Math.floor((c.width - wordWidth) / 2 / font_size);
+            var centerY = Math.floor(c.height / 2 / font_size);
+
+            wordPositions = [];
+            for (var i = 0; i < word.length; i++) {
+                wordPositions.push({
+                    x: startX + i,
+                    y: centerY,
+                    letter: word[i],
+                    originalX: startX + i,
+                    originalY: centerY,
+                    // For letter formation animation
+                    startX: Math.floor(Math.random() * columns),
+                    startY: Math.floor(Math.random() * (c.height / font_size)),
+                    progress: 0
+                });
+            }
+        }
+
+        // Drawing function
+        function draw() {
+            // Check if we need to change modes
+            var currentTime = Date.now();
+            var elapsed = currentTime - modeStartTime;
+
+            if (mode === "rain" && elapsed >= rainDuration) {
+                mode = "forming";
+                modeStartTime = currentTime;
+                calculateWordPositions();
+            } else if (mode === "forming" && elapsed >= formationDuration) {
+                mode = "showing";
+                modeStartTime = currentTime;
+            } else if (mode === "showing" && elapsed >= showDuration) {
+                mode = "dissolving";
+                modeStartTime = currentTime;
+            } else if (mode === "dissolving" && elapsed >= dissolveDuration) {
+                mode = "rain";
+                modeStartTime = currentTime;
+            }
+
+            // Black BG with translucent fill for the trail effect
+            ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+            ctx.fillRect(0, 0, c.width, c.height);
+
+            ctx.font = font_size + "px monospace";
+
+            // Handle different modes
+            if (mode === "rain") {
+                drawRain();
+            } else if (mode === "forming") {
+                drawForming(elapsed / formationDuration);
+            } else if (mode === "showing") {
+                drawWord();
+            } else if (mode === "dissolving") {
+                drawDissolving(elapsed / dissolveDuration);
+            }
+        }
+
+        // Drawing the matrix rain
+        function drawRain() {
+            ctx.fillStyle = "#0F0"; // green text
+
+            for(var i = 0; i < drops.length; i++) {
+                // A random character to print
+                var text = matrix[Math.floor(Math.random() * matrix.length)];
+                ctx.fillText(text, i * font_size, drops[i] * font_size);
+
+                // Sending the drop back to the top randomly after it has crossed the screen
+                if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                // Incrementing Y coordinate
+                drops[i]++;
+            }
+        }
+
+        // Drawing the formation of the word
+        function drawForming(progress) {
+            // Continue some rain in the background
+            ctx.fillStyle = "rgba(0, 80, 0, 0.5)"; // dimmer green
+            for(var i = 0; i < drops.length; i++) {
+                // Skip if this column is part of our word's final position
+                if (wordPositions.some(pos => pos.originalX === i)) {
+                    continue;
+                }
+
+                var text = matrix[Math.floor(Math.random() * matrix.length)];
+                ctx.fillText(text, i * font_size, drops[i] * font_size);
+
+                if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+
+            // Draw the forming letters with animation
+            ctx.fillStyle = "#0F0"; // bright green for the word
+
+            for (var i = 0; i < wordPositions.length; i++) {
+                var pos = wordPositions[i];
+
+                // Calculate current position based on progress
+                var currentX = Math.floor(pos.startX + (pos.originalX - pos.startX) * progress);
+                var currentY = Math.floor(pos.startY + (pos.originalY - pos.startY) * progress);
+
+                // Draw the letter
+                ctx.fillText(pos.letter, currentX * font_size, currentY * font_size);
+            }
+        }
+
+        // Drawing the word fully formed
+        function drawWord() {
+            // Dimmed background rain
+            ctx.fillStyle = "rgba(0, 30, 0, 0.3)"; // very dim green
+            for(var i = 0; i < drops.length; i++) {
+                if (wordPositions.some(pos => pos.originalX === i)) {
+                    continue;
+                }
+
+                var text = matrix[Math.floor(Math.random() * matrix.length)];
+                ctx.fillText(text, i * font_size, drops[i] * font_size);
+
+                if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+
+            // Draw the word with a glowing effect
+            ctx.fillStyle = "#00FF00"; // bright green
+            for (var i = 0; i < wordPositions.length; i++) {
+                var pos = wordPositions[i];
+                ctx.fillText(pos.letter, pos.originalX * font_size, pos.originalY * font_size);
+            }
+        }
+
+        // Drawing the dissolving of the word back to rain
+        function drawDissolving(progress) {
+            // Gradually bring back the full rain
+            ctx.fillStyle = "rgba(0, " + Math.floor(80 + 175 * progress) + ", 0, 0.5)";
+
+            for(var i = 0; i < drops.length; i++) {
+                var text = matrix[Math.floor(Math.random() * matrix.length)];
+
+                // If this is where a letter was, gradually replace it
+                var wordLetter = wordPositions.find(pos => pos.originalX === i);
+                if (wordLetter && Math.random() > progress) {
+                    // Still show the word letter with reducing probability
+                    ctx.fillStyle = "rgba(0, 255, 0, " + (1 - progress) + ")";
+                    ctx.fillText(wordLetter.letter, i * font_size, wordLetter.originalY * font_size);
+                    ctx.fillStyle = "rgba(0, " + Math.floor(80 + 175 * progress) + ", 0, 0.5)";
+                } else {
+                    // Normal rain character
+                    ctx.fillText(text, i * font_size, drops[i] * font_size);
+                }
+
+                if(drops[i] * font_size > c.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+        }
+
+        // Window resize handler
+        window.addEventListener('resize', function() {
+            c.height = window.innerHeight;
+            c.width = window.innerWidth;
+            columns = c.width/font_size;
+
+            // Reinitialize drops when window is resized
+            drops = [];
+            for(var x = 0; x < columns; x++) {
+                drops[x] = 1;
+            }
+
+            if (mode !== "rain") {
+                calculateWordPositions();
+            }
+        });
+
+        // Start the animation
+        setInterval(draw, 33); // ~30fps
+        </script>
+    </body>
+</html>

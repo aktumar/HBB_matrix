@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Матричный дождь с INNOFORCE</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            font-family: monospace;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #matrixCanvas {
+            z-index: 20;
+        }
+
+        #videoElement {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transform: scaleX(-1); /* Зеркальное отображение */
+            z-index: 10;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            z-index: 30;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: rgba(0, 50, 0, 0.7);
+            color: #0F0;
+            border: 1px solid #0F0;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <video id="videoElement" autoplay playsinline></video>
+    <canvas id="matrixCanvas"></canvas>
+
+    <div id="controls">
+        <button id="cameraBtn">Включить камеру</button>
+    </div>
+
+    <script>
+        // Загружаем TensorFlow.js и модель обнаружения поз
+        document.write('<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0"><\/script>');
+        document.write('<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0"><\/script>');
+
+        // Основные элементы
+        const video = document.getElementById('videoElement');
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        const cameraBtn = document.getElementById('cameraBtn');
+
+        // Настройка размеров
+        matrixCanvas.width = window.innerWidth;
+        matrixCanvas.height = window.innerHeight;
+
+        // Настройки матрицы
+        const fontSize = 10; // Уменьшенный размер шрифта для более высокого разрешения
+        const columns = Math.floor(matrixCanvas.width / fontSize);
+        const rows = Math.floor(matrixCanvas.height / fontSize);
+
+        // Символы матрицы
+        const symbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,./<>?アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
+        const symbolArray = symbols.split('');
+
+        // Капли дождя
+        let drops = Array(columns).fill(0).map(() => Math.floor(Math.random() * rows));
+
+        // Для слова INNOFORCE
+        const word = "INNOFORCE";
+        let wordPositions = [];
+        let wordDrops = []; // Для эффекта дождя от букв
+
+        // Переменные для распознавания
+        let net = null;
+        let segmentation = null;
+        let cameraActive = false;
+        let humanMask = new Uint8Array(columns * rows);
+
+        // Время последнего кадра для анимации
+        let lastFrameTime = 0;
+        const frameRate = 30;
+
+        // Инициализация
+        window.addEventListener('load', async () => {
+            // Рассчитываем позиции для слова
+            calculateWordPositions();
+
+            // Инициализируем эффект дождя от букв
+            initWordRain();
+
+            // Начинаем анимацию
+            requestAnimationFrame(animate);
+
+            // Загружаем модель в фоновом режиме
+            setTimeout(async () => {
+                try {
+                    net = await bodyPix.load({
+                        architecture: 'MobileNetV1',
+                        outputStride: 16,
+                        multiplier: 0.75,
+                        quantBytes: 2
+                    });
+                    // Модель загружена, но не показываем сообщение
+                } catch (error) {
+                    console.error("Ошибка загрузки модели:", error);
+                }
+            }, 1000);
+        });
+
+        // Обработчики событий
+        cameraBtn.addEventListener('click', toggleCamera);
+        window.addEventListener('resize', handleResize);
+
+        // Включение/выключение камеры
+        async function toggleCamera() {
+            if (!cameraActive) {
+                if (!net) {
+                    // Если модель еще не загружена, ждем
+                    net = await bodyPix.load({
+                        architecture: 'MobileNetV1',
+                        outputStride: 16,
+                        multiplier: 0.75,
+                        quantBytes: 2
+                    });
+                }
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'user' }
+                    });
+
+                    video.srcObject = stream;
+                    cameraActive = true;
+                    cameraBtn.textContent = "Выключить камеру";
+
+                    // Начинаем обнаружение
+                    detectHuman();
+                } catch (error) {
+                    console.error("Ошибка доступа к камере:", error);
+                }
+            } else {
+                const stream = video.srcObject;
+                if (stream) {
+                    const tracks = stream.getTracks();
+                    tracks.forEach(track => track.stop());
+                    video.srcObject = null;
+                }
+
+                cameraActive = false;
+                cameraBtn.textContent = "Включить камеру";
+
+                // Сбрасываем маску человека
+                humanMask = new Uint8Array(columns * rows);
+            }
+        }
+
+        // Расчет позиций для слова INNOFORCE
+        function calculateWordPositions() {
+            const wordWidth = word.length * fontSize;
+            const startX = Math.floor((matrixCanvas.width - wordWidth) / 2 / fontSize);
+            const centerY = Math.floor(matrixCanvas.height / 2 / fontSize);
+
+            wordPositions = [];
+            for (let i = 0; i < word.length; i++) {
+                wordPositions.push({
+                    x: startX + i,
+                    y: centerY,
+                    letter: word[i]
+                });
+            }
+        }
+
+        // Инициализация эффекта дождя от букв слова
+        function initWordRain() {
+            wordDrops = [];
+
+            // Для каждой буквы создаем несколько капель дождя
+            for (let i = 0; i < wordPositions.length; i++) {
+                const pos = wordPositions[i];
+
+                // Создаем 3 капли для каждой буквы
+                for (let j = 0; j < 3; j++) {
+                    wordDrops.push({
+                        x: pos.x,
+                        y: pos.y + 1 + j, // Начинаем немного ниже буквы
+                        speed: 1 + Math.random() * 0.5
+                    });
+                }
+            }
+        }
+
+        // Обновление эффекта дождя от букв
+        function updateWordRain() {
+            for (let i = 0; i < wordDrops.length; i++) {
+                const drop = wordDrops[i];
+
+                // Двигаем каплю вниз
+                drop.y += drop.speed;
+
+                // Если капля достигла дна, возвращаем ее к слову
+                if (drop.y * fontSize > matrixCanvas.height) {
+                    const randomLetterIndex = Math.floor(Math.random() * wordPositions.length);
+                    drop.x = wordPositions[randomLetterIndex].x;
+                    drop.y = wordPositions[randomLetterIndex].y + 1;
+                    drop.speed = 1 + Math.random() * 0.5;
+                }
+            }
+        }
+
+        // Обнаружение человека
+        async function detectHuman() {
+            if (!cameraActive) return;
+
+            // Проверяем, что видео готово
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                try {
+                    // Обнаруживаем человека с повышенной точностью
+                    segmentation = await net.segmentPerson(video, {
+                        flipHorizontal: false,
+                        internalResolution: 'high',
+                        segmentationThreshold: 0.5,
+                        maxDetections: 1
+                    });
+
+                    // Преобразуем сегментацию в нашу матрицу
+                    const videoRatio = video.videoWidth / video.videoHeight;
+                    const canvasRatio = matrixCanvas.width / matrixCanvas.height;
+
+                    let drawWidth, drawHeight, offsetX, offsetY;
+
+                    if (videoRatio > canvasRatio) {
+                        drawHeight = matrixCanvas.height;
+                        drawWidth = video.videoWidth * (drawHeight / video.videoHeight);
+                        offsetX = (matrixCanvas.width - drawWidth) / 2;
+                        offsetY = 0;
+                    } else {
+                        drawWidth = matrixCanvas.width;
+                        drawHeight = video.videoHeight * (drawWidth / video.videoWidth);
+                        offsetX = 0;
+                        offsetY = (matrixCanvas.height - drawHeight) / 2;
+                    }
+
+                    // Заполняем матрицу маской человека с дополнительной обработкой для усиления контраста
+                    humanMask.fill(0);
+
+                    // Применяем более чувствительное распознавание
+                    const confidenceThreshold = 0.3; // Понижаем порог для лучшего распознавания
+
+                    for (let y = 0; y < rows; y++) {
+                        for (let x = 0; x < columns; x++) {
+                            const pixelX = Math.floor(x * fontSize - offsetX);
+                            const pixelY = Math.floor(y * fontSize - offsetY);
+
+                            // Нормализуем координаты для mask
+                            const normalizedX = Math.floor((pixelX / drawWidth) * video.videoWidth);
+                            const normalizedY = Math.floor((pixelY / drawHeight) * video.videoHeight);
+
+                            // Проверяем, что координаты в пределах видео и маски
+                            if (normalizedX >= 0 && normalizedX < video.videoWidth &&
+                                normalizedY >= 0 && normalizedY < video.videoHeight) {
+
+                                const maskIndex = normalizedY * video.videoWidth + normalizedX;
+
+                                // Используем более чувствительное обнаружение
+                                if (maskIndex < segmentation.data.length &&
+                                    (segmentation.data[maskIndex] ||
+                                     // Проверяем соседние пиксели для сглаживания
+                                     (normalizedX > 0 && segmentation.data[maskIndex - 1]) ||
+                                     (normalizedX < video.videoWidth - 1 && segmentation.data[maskIndex + 1]) ||
+                                     (normalizedY > 0 && segmentation.data[maskIndex - video.videoWidth]) ||
+                                     (normalizedY < video.videoHeight - 1 && segmentation.data[maskIndex + video.videoWidth]))) {
+
+                                    humanMask[y * columns + x] = 1;
+                                }
+                            }
+                        }
+                    }
+
+                    // Применяем сглаживание для улучшения силуэта
+                    const tempMask = new Uint8Array(humanMask.length);
+                    for (let y = 1; y < rows - 1; y++) {
+                        for (let x = 1; x < columns - 1; x++) {
+                            const idx = y * columns + x;
+
+                            // Проверяем 3x3 область вокруг пикселя
+                            let count = 0;
+                            for (let dy = -1; dy <= 1; dy++) {
+                                for (let dx = -1; dx <= 1; dx++) {
+                                    count += humanMask[(y + dy) * columns + (x + dx)];
+                                }
+                            }
+
+                            // Если большинство пикселей в окрестности 3x3 - часть силуэта,
+                            // то заполняем и этот пиксель
+                            tempMask[idx] = (count >= 5) ? 1 : 0;
+                        }
+                    }
+
+                    // Копируем обработанную маску обратно
+                    for (let i = 0; i < humanMask.length; i++) {
+                        humanMask[i] = tempMask[i];
+                    }
+                } catch (error) {
+                    console.error("Ошибка обнаружения:", error);
+                }
+            }
+
+            // Продолжаем обнаружение
+            requestAnimationFrame(detectHuman);
+        }
+
+        // Главная функция анимации
+        function animate(currentTime) {
+            // Ограничиваем частоту кадров
+            if (currentTime - lastFrameTime < 1000 / frameRate) {
+                requestAnimationFrame(animate);
+                return;
+            }
+
+            lastFrameTime = currentTime;
+
+            // Затемнение фона для эффекта следа
+            matrixCtx.fillStyle = "rgba(0, 0, 0, 0.15)"; // Увеличенная скорость затухания для более четкого силуэта
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+
+            // Обновляем эффект дождя от букв
+            updateWordRain();
+
+            // Рисуем основной матричный дождь
+            drawMatrixRain();
+
+            // Рисуем слово INNOFORCE
+            drawWord();
+
+            // Рисуем дождь от букв
+            drawWordRain();
+
+            // Продолжаем анимацию
+            requestAnimationFrame(animate);
+        }
+
+        // Отрисовка матричного дождя
+        function drawMatrixRain() {
+            // Для каждой колонки
+            for (let i = 0; i < columns; i++) {
+                // Выбираем случайный символ
+                const symbol = symbolArray[Math.floor(Math.random() * symbolArray.length)];
+
+                // Проверяем, находится ли эта позиция в силуэте человека
+                const isHuman = humanMask[drops[i] * columns + i] === 1;
+
+                // Проверяем, не пересекается ли с позицией слова
+                const isWord = wordPositions.some(pos => pos.x === i && pos.y === drops[i]);
+
+                // Если это не позиция слова, рисуем каплю дождя
+                if (!isWord) {
+                    // Устанавливаем цвет и шрифт
+                    if (isHuman) {
+                        matrixCtx.fillStyle = "#FFFFFF"; // Яркий белый для человека
+                        matrixCtx.font = "bold " + (fontSize + 1) + "px monospace";
+                    } else {
+                        matrixCtx.fillStyle = "#0F0"; // Зеленый для фона
+                        matrixCtx.font = fontSize + "px monospace";
+                    }
+
+                    // Рисуем символ
+                    matrixCtx.fillText(symbol, i * fontSize, drops[i] * fontSize);
+                }
+
+                // Сбрасываем каплю, если она достигла низа
+                if (drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                } else {
+                    // Увеличиваем скорость для капель на силуэте
+                    drops[i] += isHuman ? 2 : 1;
+                }
+            }
+        }
+
+        // Рисуем слово INNOFORCE
+        function drawWord() {
+            matrixCtx.fillStyle = "#00FF00"; // Яркий зеленый
+            matrixCtx.font = "bold " + (fontSize * 1.5) + "px monospace"; // Увеличенный размер для лучшей видимости
+
+            for (let i = 0; i < wordPositions.length; i++) {
+                const pos = wordPositions[i];
+
+                // Проверяем, находится ли буква на силуэте человека
+                const isHuman = humanMask[pos.y * columns + pos.x] === 1;
+
+                if (isHuman) {
+                    matrixCtx.fillStyle = "#FFFFFF"; // Белый для человека
+                } else {
+                    matrixCtx.fillStyle = "#00FF00"; // Яркий зеленый
+                }
+
+                matrixCtx.fillText(pos.letter, pos.x * fontSize, pos.y * fontSize);
+            }
+        }
+
+        // Рисуем дождь от букв слова
+        function drawWordRain() {
+            // Функция отключена - не рисуем дождь от INNOFORCE
+            // Это делает слово более четким и убирает лишний визуальный шум
+        }
+
+        // Обработка изменения размеров окна
+        function handleResize() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+
+            const newColumns = Math.floor(matrixCanvas.width / fontSize);
+            const newRows = Math.floor(matrixCanvas.height / fontSize);
+
+            // Обновляем капли дождя
+            const newDrops = Array(newColumns).fill(0);
+            for (let i = 0; i < newColumns; i++) {
+                if (i < drops.length) {
+                    newDrops[i] = drops[i];
+                } else {
+                    newDrops[i] = Math.floor(Math.random() * newRows);
+                }
+            }
+            drops = newDrops;
+
+            // Обновляем маску человека
+            humanMask = new Uint8Array(newColumns * newRows);
+
+            // Пересчитываем позиции слова
+            calculateWordPositions();
+
+            // Обновляем эффект дождя от букв
+            initWordRain();
+        }
+    </script>
+</body>
+</html>

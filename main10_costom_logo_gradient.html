@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Матричный дождь с логотипом</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            font-family: monospace;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #matrixCanvas {
+            z-index: 20;
+        }
+
+        #logoPreloadImage {
+            display: none; /* Скрытое изображение для предзагрузки */
+        }
+    </style>
+</head>
+<body>
+    <!-- Контейнер для загрузки логотипа - внизу справа -->
+    <div id="logoControls" style="position: absolute; bottom: 20px; right: 20px; z-index: 50; background: rgba(0, 10, 0, 0.7); padding: 8px; border-radius: 5px; border: 1px solid #0F0;">
+        <input type="file" id="logoUpload" accept="image/*" style="color: #0F0; font-family: monospace; font-size: 12px; background: transparent; border: none;">
+    </div>
+    
+    <!-- Скрытое изображение для предзагрузки логотипа -->
+    <img id="logoPreloadImage" style="display: none;" alt="Logo Preload">
+    
+    <canvas id="matrixCanvas"></canvas>
+    <canvas id="logoCanvas"></canvas>
+
+    <script>
+        // Основные элементы
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        const logoCanvas = document.getElementById('logoCanvas');
+        const logoCtx = logoCanvas.getContext('2d', { willReadFrequently: true });
+        const logoPreloadImage = document.getElementById('logoPreloadImage');
+
+        // Настройка размеров
+        function resizeCanvases() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+            logoCanvas.width = window.innerWidth;
+            logoCanvas.height = window.innerHeight;
+        }
+        
+        resizeCanvases();
+
+        // Настройки матрицы
+        const fontSize = 12; // Увеличенный размер шрифта для более плотного дождя
+        let columns = Math.floor(matrixCanvas.width / fontSize);
+        let rows = Math.floor(matrixCanvas.height / fontSize);
+
+        // Символы матрицы
+        const symbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,./<>?アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
+        const symbolArray = symbols.split('');
+
+        // Капли дождя
+        let drops = [];
+
+        // Для слова INNOFORCE или другого логотипа
+        const word = "INNOFORCE";
+        let wordPositions = [];
+
+        // Маска логотипа
+        let logoMask = new Uint8Array(columns * rows);
+        let logoLoaded = false;
+
+        // Время последнего кадра для анимации
+        let lastFrameTime = 0;
+        const frameRate = 30;
+
+        // Градиентные цвета
+        const gradientColors = [
+            [91, 85, 193],   // Фиолетово-синий
+            [83, 167, 253],  // Ярко-голубой
+            [39, 229, 215],  // Бирюзовый
+            [3, 180, 125]    // Зеленый
+        ];
+
+        // Инициализация
+        window.addEventListener('load', () => {
+            // Инициализируем капли дождя с очень высокой плотностью
+            initDrops();
+            
+            // Рассчитываем позиции для слова INNOFORCE
+            calculateWordPositions();
+            
+            // Начинаем с пустого экрана (без логотипа)
+            logoLoaded = false;
+            
+            // Начинаем анимацию
+            requestAnimationFrame(animate);
+            
+            // Обработчик загрузки пользовательского логотипа
+            document.getElementById('logoUpload').addEventListener('change', function(e) {
+                if (e.target.files && e.target.files[0]) {
+                    const reader = new FileReader();
+                    
+                    reader.onload = function(event) {
+                        // Загружаем и обрабатываем пользовательский логотип
+                        loadLogoAndCreateMask(event.target.result);
+                    }
+                    
+                    reader.readAsDataURL(e.target.files[0]);
+                }
+            });
+        });
+
+        // Инициализация капель дождя
+        function initDrops() {
+            drops = [];
+
+            // Создаем в 6 раз больше капель, чем колонок, для сверхвысокой плотности
+            for (let i = 0; i < columns * 6; i++) {
+                drops.push(Math.floor(Math.random() * rows));
+            }
+        }
+
+        // Расчет позиций для слова INNOFORCE
+        function calculateWordPositions() {
+            const wordWidth = word.length * fontSize * 10; // Учитываем большой размер шрифта
+            const startX = Math.floor((matrixCanvas.width - wordWidth) / 2);
+            const centerY = Math.floor(matrixCanvas.height / 2);
+
+            wordPositions = [];
+            for (let i = 0; i < word.length; i++) {
+                wordPositions.push({
+                    x: startX + i * fontSize * 10,
+                    y: centerY,
+                    letter: word[i]
+                });
+            }
+        }
+
+        // Загрузка логотипа и создание маски
+        function loadLogoAndCreateMask(imageUrl = null) {
+            // Функция для создания маски из изображения
+            function createMaskFromImage(img) {
+                // Проверяем, что изображение загружено
+                if (!img.complete || !img.naturalWidth) {
+                    console.error("Изображение не загружено");
+                    return;
+                }
+                
+                // Очищаем канвас логотипа
+                logoCtx.clearRect(0, 0, logoCanvas.width, logoCanvas.height);
+                
+                // Рассчитываем размер логотипа чтобы он занимал 70% холста, сохраняя пропорции
+                const logoRatio = img.width / img.height;
+                let logoWidth, logoHeight;
+                
+                if (logoCanvas.width / logoCanvas.height > logoRatio) {
+                    // Экран шире, чем логотип
+                    logoHeight = logoCanvas.height * 0.7;
+                    logoWidth = logoHeight * logoRatio;
+                } else {
+                    // Экран уже, чем логотип
+                    logoWidth = logoCanvas.width * 0.7;
+                    logoHeight = logoWidth / logoRatio;
+                }
+                
+                // Вычисляем координаты для центрирования
+                const offsetX = (logoCanvas.width - logoWidth) / 2;
+                const offsetY = (logoCanvas.height - logoHeight) / 2;
+                
+                // Рисуем логотип на холсте
+                logoCtx.drawImage(img, offsetX, offsetY, logoWidth, logoHeight);
+                
+                // Получаем данные пикселей
+                const imageData = logoCtx.getImageData(0, 0, logoCanvas.width, logoCanvas.height);
+                const pixels = imageData.data;
+                
+                // Обновляем маску логотипа в соответствии с новыми размерами
+                logoMask = new Uint8Array(columns * rows);
+                
+                // Создаем маску с высокой детализацией
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < columns; x++) {
+                        // Координаты пикселя на холсте
+                        const canvasX = x * fontSize;
+                        const canvasY = y * fontSize;
+                        
+                        // Проверяем, что координаты внутри холста
+                        if (canvasX >= 0 && canvasX < logoCanvas.width && 
+                            canvasY >= 0 && canvasY < logoCanvas.height) {
+                            
+                            // Индекс в массиве пикселей (RGBA)
+                            const i = (canvasY * logoCanvas.width + canvasX) * 4;
+                            
+                            // Проверяем прозрачность (альфа-канал) и яркость пикселя
+                            // Используем низкий порог для лучшего обнаружения
+                            const alpha = pixels[i + 3];
+                            const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+                            
+                            // Учитываем как прозрачные, так и яркие пиксели
+                            if (alpha > 30 && brightness > 100) {
+                                logoMask[y * columns + x] = 1;
+                            }
+                        }
+                    }
+                }
+                
+                // Применяем сглаживание краев для более плавного контура
+                const tempMask = new Uint8Array(logoMask.length);
+                for (let y = 1; y < rows - 1; y++) {
+                    for (let x = 1; x < columns - 1; x++) {
+                        const idx = y * columns + x;
+                        
+                        // Подсчитываем количество соседних пикселей в маске
+                        let count = 0;
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                count += logoMask[(y + dy) * columns + (x + dx)];
+                            }
+                        }
+                        
+                        // Если более 3 соседей - это часть логотипа (снизили порог для лучшего обнаружения)
+                        tempMask[idx] = (count >= 3) ? 1 : 0;
+                    }
+                }
+                
+                // Копируем обработанную маску обратно
+                for (let i = 0; i < logoMask.length; i++) {
+                    logoMask[i] = tempMask[i];
+                }
+                
+                logoLoaded = true;
+                console.log("Логотип загружен и маска создана");
+                
+                // Очищаем холст логотипа, так как он использовался только для создания маски
+                logoCtx.clearRect(0, 0, logoCanvas.width, logoCanvas.height);
+            }
+            
+            // Если передан URL изображения, загружаем его
+            if (imageUrl) {
+                logoPreloadImage.src = imageUrl;
+                logoPreloadImage.onload = function() {
+                    createMaskFromImage(logoPreloadImage);
+                };
+                return;
+            }
+            
+            // Иначе, начинаем с пустой маски (без логотипа)
+            logoMask = new Uint8Array(columns * rows);
+            logoLoaded = false;
+        }
+
+        // Получение цвета градиента
+        function getSmoothGradientColor(position) {
+            // position от 0 до 1 (для плавного перехода)
+            const segmentCount = gradientColors.length - 1;
+            const segmentPosition = position * segmentCount;
+            const segmentIndex = Math.floor(segmentPosition);
+            const segmentOffset = segmentPosition - segmentIndex;
+            
+            // Получаем два ближайших цвета для интерполяции
+            const color1 = gradientColors[segmentIndex];
+            const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)];
+            
+            // Интерполяция между цветами
+            const r = Math.round(color1[0] + segmentOffset * (color2[0] - color1[0]));
+            const g = Math.round(color1[1] + segmentOffset * (color2[1] - color1[1]));
+            const b = Math.round(color1[2] + segmentOffset * (color2[2] - color1[2]));
+            
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Главная функция анимации
+        function animate(currentTime) {
+            // Ограничиваем частоту кадров
+            if (currentTime - lastFrameTime < 1000 / frameRate) {
+                requestAnimationFrame(animate);
+                return;
+            }
+
+            lastFrameTime = currentTime;
+
+            // Затемнение фона для эффекта следа
+            matrixCtx.fillStyle = "rgba(0, 0, 0, 0.12)"; // Оптимальная скорость затухания
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+
+            // Рисуем основной матричный дождь
+            drawMatrixRain();
+
+            // Рисуем слово INNOFORCE
+            drawWord();
+
+            // Продолжаем анимацию
+            requestAnimationFrame(animate);
+        }
+
+        // Отрисовка матричного дождя
+        function drawMatrixRain() {
+            // Рисуем больше промежуточных символов для сверхвысокой плотности
+            for (let i = 0; i < columns; i++) {
+                // Несколько промежуточных позиций для каждой колонки
+                for (let j = 0; j < rows; j++) {
+                    // Рисуем символ с вероятностью 5%
+                    if (Math.random() > 0.95) {
+                        const symbol = symbolArray[Math.floor(Math.random() * symbolArray.length)];
+                        const isInLogo = logoLoaded && logoMask[j * columns + i] === 1;
+
+                        if (isInLogo) {
+                            // Используем плавный градиент
+                            const normalizedY = j / rows;
+                            const gradientColor = getSmoothGradientColor(normalizedY);
+                            matrixCtx.fillStyle = gradientColor;
+                            matrixCtx.font = "bold " + fontSize + "px monospace";
+                        } else {
+                            matrixCtx.fillStyle = "rgba(0, 255, 0, 0.3)"; // Зеленый для фона
+                            matrixCtx.font = fontSize + "px monospace";
+                        }
+
+                        matrixCtx.fillText(symbol, i * fontSize, j * fontSize);
+                    }
+                }
+            }
+
+            // Для каждой капли
+            for (let idx = 0; idx < drops.length; idx++) {
+                const i = idx % columns; // Колонка
+                const dropIdx = idx; // Индекс в массиве drops
+
+                // Выбираем случайный символ
+                const symbol = symbolArray[Math.floor(Math.random() * symbolArray.length)];
+
+                // Проверяем, находится ли эта позиция в логотипе
+                const isInLogo = logoLoaded && logoMask[Math.floor(drops[dropIdx]) * columns + i] === 1;
+
+                // Устанавливаем цвет и шрифт
+                if (isInLogo) {
+                    // Используем плавный градиент в зависимости от позиции
+                    const normalizedY = drops[dropIdx] / rows;
+                    matrixCtx.fillStyle = getSmoothGradientColor(normalizedY);
+                    matrixCtx.font = "bold " + (fontSize + 1) + "px monospace";
+                } else {
+                    matrixCtx.fillStyle = "#0F0"; // Зеленый для фона
+                    matrixCtx.font = fontSize + "px monospace";
+                }
+
+                // Рисуем символ
+                matrixCtx.fillText(symbol, i * fontSize, drops[dropIdx] * fontSize);
+
+                // Сбрасываем каплю, если она достигла низа
+                if (drops[dropIdx] * fontSize > matrixCanvas.height && Math.random() > 0.92) {
+                    drops[dropIdx] = 0;
+                } else {
+                    // Увеличиваем скорость для капель на логотипе
+                    drops[dropIdx] += isInLogo ? 2 : 1;
+                }
+            }
+        }
+
+        // Рисуем слово INNOFORCE
+        function drawWord() {
+            // Большое слово INNOFORCE - отключено, так как используем логотип
+            // Оставлено для возможности включения в будущем
+        }
+
+        // Обработка изменения размеров окна
+        window.addEventListener('resize', () => {
+            // Обновляем размеры холстов
+            resizeCanvases();
+            
+            // Обновляем количество колонок и строк
+            columns = Math.floor(matrixCanvas.width / fontSize);
+            rows = Math.floor(matrixCanvas.height / fontSize);
+            
+            // Инициализируем новые капли дождя
+            initDrops();
+            
+            // Пересчитываем позиции слова
+            calculateWordPositions();
+            
+            // Перезагружаем логотип с новыми размерами
+            loadLogoAndCreateMask();
+        });
+    </script>
+</body>
+</html>
