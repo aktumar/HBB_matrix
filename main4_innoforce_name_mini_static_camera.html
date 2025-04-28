@@ -108,7 +108,7 @@
         // Настройки матрицы
         const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
         const charactersArray = characters.split("");
-        const fontSize = 16;
+        const fontSize = 12; // Уменьшаем размер шрифта для более плотного отображения
         const columns = Math.ceil(matrixCanvas.width/fontSize);
         const rows = Math.ceil(matrixCanvas.height/fontSize);
 
@@ -134,6 +134,12 @@
 
         // Матрица силуэта - будет содержать символы для отображения
         let silhouetteMatrix = Array(rows * columns).fill(null);
+        
+        // Дождь из силуэта - теперь используем тот же механизм что и для основного дождя
+        let silhouetteDrops = [];
+        for(let x = 0; x < columns; x++) {
+            silhouetteDrops[x] = 0; // начинаем с 0, чтобы сразу появились
+        }
 
         // Инициализация камеры
         cameraButton.addEventListener("click", startCamera);
@@ -186,6 +192,11 @@
                 videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
                 silhouetteCtx.clearRect(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
                 silhouetteMatrix = Array(rows * columns).fill(null);
+                
+                // Сбросить силуэтные капли
+                for(let x = 0; x < columns; x++) {
+                    silhouetteDrops[x] = 0; 
+                }
             }
         }
 
@@ -203,9 +214,9 @@
                     letter: word[i],
                     originalX: startX + i,
                     originalY: centerY,
-                    // Для анимации формирования
-                    startX: Math.floor(Math.random() * columns),
-                    startY: Math.floor(Math.random() * rows),
+                    // Для анимации формирования - начинаем с верхней части экрана
+                    startX: startX + i, // Теперь буквы падают сверху, начиная с правильной Х-позиции
+                    startY: -5 - Math.floor(Math.random() * 10), // Разные высоты для каждой буквы
                     progress: 0
                 });
             }
@@ -221,6 +232,7 @@
 
             if (videoWidth && videoHeight) {
                 // Расчет размера и положения для сохранения пропорций
+                // Возвращаем max для заполнения всего экрана
                 const scale = Math.max(
                     videoCanvas.width / videoWidth,
                     videoCanvas.height / videoHeight
@@ -228,7 +240,8 @@
 
                 // Центрирование видео
                 const x = (videoCanvas.width - videoWidth * scale) / 2;
-                const y = (videoCanvas.height - videoHeight * scale) / 2;
+                // Немного сдвигаем видео вверх, чтобы нижняя часть не обрезалась
+                const y = (videoCanvas.height - videoHeight * scale) / 2 - 20;
 
                 // Очистка канваса
                 videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
@@ -245,7 +258,7 @@
 
                 // Добавим контраст для лучшего обнаружения светлых областей
                 videoCtx.globalCompositeOperation = 'source-atop';
-                videoCtx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                videoCtx.fillStyle = 'rgba(255, 255, 255, 0.2)'; // Увеличиваем контраст
                 videoCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
                 videoCtx.globalCompositeOperation = 'source-over';
 
@@ -257,6 +270,9 @@
 
                 // Очищаем матрицу силуэта
                 silhouetteMatrix = Array(rows * columns).fill(null);
+
+                // Пониженный порог для силуэта, чтобы захватить больше деталей
+                const loweredThreshold = silhouetteThreshold * 0.8;
 
                 // Обновляем силуэт - ищем светлые области
                 for (let y = 0; y < rows; y++) {
@@ -272,7 +288,7 @@
                             const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
 
                             // Если яркость ВЫШЕ порога - считаем что это часть силуэта (светлые области)
-                            if (brightness > silhouetteThreshold) {
+                            if (brightness > loweredThreshold) {
                                 silhouetteData[y * columns + x] = 1;
 
                                 // Создаем случайный символ для силуэта
@@ -313,9 +329,6 @@
                 processVideo();
             }
 
-            // Очищаем слой с силуэтом
-            silhouetteCtx.clearRect(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
-
             // Затемняем фон для эффекта следа
             matrixCtx.fillStyle = "rgba(0, 0, 0, 0.1)";
             matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
@@ -333,28 +346,72 @@
                 drawDissolving(elapsed / dissolveDuration);
             }
 
-            // Отрисовываем силуэт поверх всего
-            drawSilhouette();
+            // Отрисовываем силуэт с эффектом дождя
+            if (cameraActive) {
+                drawSilhouette();
+            }
         }
 
-        // Функция отрисовки силуэта
+        // Отрисовка силуэта с эффектом матричного дождя
         function drawSilhouette() {
             if (!cameraActive) return;
 
+            silhouetteCtx.clearRect(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
             silhouetteCtx.font = "bold " + fontSize + "px monospace";
-            silhouetteCtx.fillStyle = "#00FF00"; // Ярко-зеленый цвет для силуэта
+            silhouetteCtx.fillStyle = "#0F0"; // Яркий зеленый цвет для силуэта
 
-            for (let y = 0; y < rows; y++) {
-                for (let x = 0; x < columns; x++) {
-                    const index = y * columns + x;
-                    const char = silhouetteMatrix[index];
-
-                    if (char !== null) {
-                        // Рисуем символ силуэта
-                        silhouetteCtx.fillText(char, x * fontSize, y * fontSize);
+            // Проходим по всем колонкам для рисования дождя
+            for (let x = 0; x < columns; x++) {
+                // В каждой колонке нам нужно определить "светлые" области силуэта
+                const silhouettePositions = [];
+                
+                // Собираем все позиции силуэта в текущей колонке
+                for (let y = 0; y < rows; y++) {
+                    if (silhouetteData[y * columns + x] === 1) {
+                        silhouettePositions.push(y);
+                    }
+                }
+                
+                // Если есть силуэт в этой колонке
+                if (silhouettePositions.length > 0) {
+                    // Перемещаем дождь вниз
+                    silhouetteDrops[x] += 0.5 + Math.random() * 0.5;
+                    
+                    // Если капля ушла за пределы экрана, возвращаем ее наверх
+                    if (silhouetteDrops[x] > rows) {
+                        silhouetteDrops[x] = 0;
+                    }
+                    
+                    // Целая часть позиции капли
+                    const dropPosition = Math.floor(silhouetteDrops[x]);
+                    
+                    // Рисуем дождь в области силуэта
+                    for (let i = 0; i < silhouettePositions.length; i++) {
+                        const position = silhouettePositions[i];
+                        
+                        // Определяем, нужно ли рисовать падающий символ или статичный символ силуэта
+                        if (position === dropPosition || 
+                            (position > 0 && position === dropPosition + 1) || 
+                            (position > 1 && position === dropPosition + 2)) {
+                            // Падающий символ с ярко-зеленым цветом
+                            silhouetteCtx.fillStyle = "#00FF00";
+                            const text = silhouetteCharsArray[Math.floor(Math.random() * silhouetteCharsArray.length)];
+                            silhouetteCtx.fillText(text, x * fontSize, position * fontSize);
+                        }
+                        else {
+                            // Обычный символ силуэта, чуть темнее
+                            silhouetteCtx.fillStyle = "#0C0";
+                            const text = silhouetteCharsArray[Math.floor(Math.random() * silhouetteCharsArray.length)];
+                            silhouetteCtx.fillText(text, x * fontSize, position * fontSize);
+                        }
                     }
                 }
             }
+        }
+        
+        // Убираем старую функцию drawSilhouetteDrops, так как теперь эффект дождя интегрирован в drawSilhouette
+        function drawSilhouetteDrops() {
+            // Функция больше не используется
         }
 
         // Отрисовка матричного дождя
@@ -378,7 +435,7 @@
             }
         }
 
-        // Отрисовка формирования слова
+        // Отрисовка формирования слова - теперь буквы падают сверху
         function drawForming(progress) {
             // Продолжаем дождь на фоне
             matrixCtx.fillStyle = "rgba(0, 80, 0, 0.5)"; // Тусклый зеленый
@@ -399,18 +456,38 @@
                 drops[i]++;
             }
 
-            // Отрисовка формирующихся букв с анимацией
+            // Отрисовка формирующихся букв с анимацией падающих сверху букв
             matrixCtx.fillStyle = "#00FF00"; // Яркий зеленый для слова
 
             for (let i = 0; i < wordPositions.length; i++) {
                 const pos = wordPositions[i];
 
-                // Рассчитываем текущую позицию на основе прогресса
-                const currentX = Math.floor(pos.startX + (pos.originalX - pos.startX) * progress);
+                // Все буквы начинаются сверху и падают вниз до своей позиции
                 const currentY = Math.floor(pos.startY + (pos.originalY - pos.startY) * progress);
-
-                // Рисуем букву
-                matrixCtx.fillText(pos.letter, currentX * fontSize, currentY * fontSize);
+                
+                // Добавляем эффект скорости - сначала быстро, потом замедляется
+                const easeOutY = pos.startY + (pos.originalY - pos.startY) * 
+                               (1 - Math.pow(1 - progress, 3)); // cubic easing out
+                
+                // Рисуем букву падающую сверху
+                matrixCtx.fillText(pos.letter, pos.originalX * fontSize, easeOutY * fontSize);
+                
+                // Рисуем след из символов выше падающей буквы (эффект дождя)
+                if (progress < 0.9) { // когда буква почти достигла места, перестаем рисовать след
+                    const trailLength = 5; // длина следа
+                    matrixCtx.fillStyle = "rgba(0, 255, 0, 0.5)"; // полупрозрачный для следа
+                    
+                    for (let j = 1; j <= trailLength; j++) {
+                        if (easeOutY - j > 0) {
+                            const trailChar = charactersArray[Math.floor(Math.random() * charactersArray.length)];
+                            const trailOpacity = 0.7 - (j / trailLength * 0.6); // убывающая прозрачность
+                            matrixCtx.fillStyle = `rgba(0, 255, 0, ${trailOpacity})`;
+                            matrixCtx.fillText(trailChar, pos.originalX * fontSize, (easeOutY - j) * fontSize);
+                        }
+                    }
+                    
+                    matrixCtx.fillStyle = "#00FF00"; // возвращаем яркий цвет для основной буквы
+                }
             }
         }
 
@@ -491,6 +568,17 @@
                     }
                 }
                 drops = newDrops;
+                
+                // Обновляем силуэтные капли
+                const newSilhouetteDrops = [];
+                for(let x = 0; x < newColumns; x++) {
+                    if (x < silhouetteDrops.length) {
+                        newSilhouetteDrops[x] = silhouetteDrops[x];
+                    } else {
+                        newSilhouetteDrops[x] = 0;
+                    }
+                }
+                silhouetteDrops = newSilhouetteDrops;
 
                 // Обновляем силуэт
                 if (cameraActive) {
