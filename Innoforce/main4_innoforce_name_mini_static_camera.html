@@ -40,17 +40,25 @@
                 pointer-events: none;
             }
 
-            #cameraButton {
+            #controls {
                 position: absolute;
                 bottom: 20px;
                 left: 50%;
                 transform: translateX(-50%);
+                z-index: 40;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+                font-family: monospace;
+            }
+
+            #cameraButton {
                 padding: 10px 20px;
                 background-color: rgba(0, 50, 0, 0.7);
                 color: #0F0;
                 border: 1px solid #0F0;
                 cursor: pointer;
-                z-index: 40;
                 font-family: monospace;
                 font-size: 16px;
                 border-radius: 5px;
@@ -58,6 +66,19 @@
 
             #cameraButton:hover {
                 background-color: rgba(0, 80, 0, 0.9);
+            }
+
+            #cameraSelect {
+                padding: 5px 10px;
+                background-color: rgba(0, 50, 0, 0.7);
+                color: #0F0;
+                border: 1px solid #0F0;
+                cursor: pointer;
+                font-family: monospace;
+                font-size: 14px;
+                border-radius: 5px;
+                width: 220px;
+                display: none;
             }
 
             #message {
@@ -81,7 +102,10 @@
         <canvas id="videoCanvas"></canvas>
         <canvas id="matrixCanvas"></canvas>
         <canvas id="silhouetteCanvas"></canvas>
-        <button id="cameraButton">Включить камеру</button>
+        <div id="controls">
+            <select id="cameraSelect"></select>
+            <button id="cameraButton">Включить камеру</button>
+        </div>
         <div id="message">Нажмите "Разрешить" в запросе камеры для продолжения</div>
 
         <script>
@@ -93,8 +117,17 @@
         const silhouetteCanvas = document.getElementById("silhouetteCanvas");
         const silhouetteCtx = silhouetteCanvas.getContext("2d");
         const cameraButton = document.getElementById("cameraButton");
+        const cameraSelect = document.getElementById("cameraSelect");
         const messageDiv = document.getElementById("message");
 
+        // Базовый масштаб для адаптивного размера шрифта
+        const baseWidth = 1920;
+        const baseHeight = 1080;
+        const baseFontSize = 12;
+
+        // Вычисляем адаптивный размер шрифта
+        let fontSize = Math.max(8, Math.round(baseFontSize * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight)));
+        
         // Настройки канваса
         matrixCanvas.width = videoCanvas.width = silhouetteCanvas.width = window.innerWidth;
         matrixCanvas.height = videoCanvas.height = silhouetteCanvas.height = window.innerHeight;
@@ -104,13 +137,17 @@
         let silhouetteData;
         let cameraActive = false;
         const silhouetteThreshold = 100; // Повышенный порог для светлых областей
+        
+        // Переменные для выбора камеры
+        let cameras = [];
+        let selectedCameraId = '';
+        const useSecondCameraByDefault = true; // Автоматически выбирать вторую камеру
 
         // Настройки матрицы
         const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
         const charactersArray = characters.split("");
-        const fontSize = 12; // Уменьшаем размер шрифта для более плотного отображения
-        const columns = Math.ceil(matrixCanvas.width/fontSize);
-        const rows = Math.ceil(matrixCanvas.height/fontSize);
+        let columns = Math.ceil(matrixCanvas.width/fontSize);
+        let rows = Math.ceil(matrixCanvas.height/fontSize);
 
         // Отдельные символы для силуэта - только числа и буквы X для более чёткого эффекта
         const silhouetteChars = "01X3456789X";
@@ -135,25 +172,161 @@
         // Матрица силуэта - будет содержать символы для отображения
         let silhouetteMatrix = Array(rows * columns).fill(null);
         
-        // Дождь из силуэта - теперь используем тот же механизм что и для основного дождя
+        // Дождь из силуэта
         let silhouetteDrops = [];
         for(let x = 0; x < columns; x++) {
             silhouetteDrops[x] = 0; // начинаем с 0, чтобы сразу появились
         }
 
-        // Инициализация камеры
-        cameraButton.addEventListener("click", startCamera);
+        // Перечисление доступных камер
+        async function enumerateCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                cameras = devices.filter(device => device.kind === 'videoinput');
+                
+                // Если камер нет, выводим сообщение
+                if (cameras.length === 0) {
+                    console.error("Камеры не обнаружены");
+                    return;
+                }
+                
+                // Очищаем выпадающий список
+                cameraSelect.innerHTML = '';
+                
+                // Заполняем выпадающий список
+                cameras.forEach((camera, index) => {
+                    const option = document.createElement('option');
+                    option.value = camera.deviceId;
+                    option.text = camera.label || `Камера ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+                
+                // Если у нас есть более одной камеры, показываем селектор
+                if (cameras.length > 1) {
+                    cameraSelect.style.display = 'block';
+                    
+                    // Если нужно всегда использовать вторую камеру
+                    if (useSecondCameraByDefault && cameras.length >= 2) {
+                        cameraSelect.selectedIndex = 1; // Выбираем вторую камеру (индекс 1)
+                        selectedCameraId = cameras[1].deviceId;
+                    }
+                } else {
+                    // Если камера только одна, скрываем селектор
+                    cameraSelect.style.display = 'none';
+                    selectedCameraId = cameras[0].deviceId;
+                }
+                
+                console.log("Доступные камеры:", cameras.map(c => c.label || "Неизвестная камера"));
+                console.log("Выбрана камера:", selectedCameraId);
+            } catch (error) {
+                console.error("Ошибка при получении списка камер:", error);
+            }
+        }
 
+        // Инициализация при загрузке страницы
+        window.addEventListener('load', function() {
+            // Получаем список камер
+            enumerateCameras();
+            
+            // Обновляем адаптивные размеры
+            updateSizes();
+            
+            // Рассчитываем позиции для слова
+            calculateWordPositions();
+        });
+
+        // Обработчики событий
+        cameraButton.addEventListener("click", toggleCamera);
+        cameraSelect.addEventListener("change", function() {
+            selectedCameraId = this.value;
+            // Если камера уже активна, перезапускаем её с новым выбором
+            if (cameraActive) {
+                stopCamera();
+                startCamera();
+            }
+        });
+
+        // Функция обновления размеров
+        function updateSizes() {
+            // Обновляем размер шрифта на основе размера экрана
+            fontSize = Math.max(8, Math.round(baseFontSize * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight)));
+            
+            // Пересчитываем количество столбцов и строк
+            columns = Math.ceil(matrixCanvas.width / fontSize);
+            rows = Math.ceil(matrixCanvas.height / fontSize);
+            
+            console.log(`Размер экрана: ${window.innerWidth}x${window.innerHeight}, шрифт: ${fontSize}, столбцов: ${columns}, строк: ${rows}`);
+            
+            // Обновляем силуэт
+            silhouetteData = new Uint8Array(columns * rows);
+            silhouetteMatrix = Array(rows * columns).fill(null);
+            
+            // Обновляем капли
+            if (drops.length !== columns) {
+                const newDrops = [];
+                for(let x = 0; x < columns; x++) {
+                    if (x < drops.length) {
+                        newDrops[x] = drops[x];
+                    } else {
+                        newDrops[x] = 1;
+                    }
+                }
+                drops = newDrops;
+            }
+            
+            // Обновляем силуэтные капли
+            if (silhouetteDrops.length !== columns) {
+                const newSilhouetteDrops = [];
+                for(let x = 0; x < columns; x++) {
+                    if (x < silhouetteDrops.length) {
+                        newSilhouetteDrops[x] = silhouetteDrops[x];
+                    } else {
+                        newSilhouetteDrops[x] = 0;
+                    }
+                }
+                silhouetteDrops = newSilhouetteDrops;
+            }
+        }
+
+        // Переключение камеры
+        function toggleCamera() {
+            if (!cameraActive) {
+                startCamera();
+            } else {
+                stopCamera();
+            }
+        }
+
+        // Запуск камеры
         function startCamera() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 messageDiv.style.display = "block";
+                
+                // Определяем, какую камеру использовать
+                let constraints;
+                if (selectedCameraId) {
+                    constraints = {
+                        video: {
+                            deviceId: { exact: selectedCameraId },
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        }
+                    };
+                    console.log("Используем выбранную камеру:", selectedCameraId);
+                } else {
+                    constraints = {
+                        video: {
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        }
+                    };
+                    console.log("Используем любую доступную камеру");
+                }
 
-                navigator.mediaDevices.getUserMedia({ video: true })
+                navigator.mediaDevices.getUserMedia(constraints)
                     .then(function(stream) {
                         messageDiv.style.display = "none";
                         cameraButton.textContent = "Отключить камеру";
-                        cameraButton.removeEventListener("click", startCamera);
-                        cameraButton.addEventListener("click", stopCamera);
 
                         video = document.createElement('video');
                         video.srcObject = stream;
@@ -163,13 +336,31 @@
 
                         // Создаем массив для хранения силуэта
                         silhouetteData = new Uint8Array(columns * rows);
+                        
+                        // Запускаем рендеринг
+                        if (!renderInterval) {
+                            renderInterval = setInterval(draw, 33); // ~30fps
+                        }
+                        
+                        // Выводим информацию о камере после её загрузки
+                        video.onloadedmetadata = function() {
+                            console.log(`Размеры видео: ${video.videoWidth}x${video.videoHeight}`);
+                        };
                     })
                     .catch(function(error) {
-                        console.error("Камера не доступна: ", error);
-                        messageDiv.textContent = "Доступ к камере не получен. Пожалуйста, разрешите доступ к камере и попробуйте снова.";
-                        setTimeout(() => {
-                            messageDiv.style.display = "none";
-                        }, 3000);
+                        console.error("Ошибка доступа к камере:", error);
+                        
+                        // Пробуем использовать любую доступную камеру как запасной вариант
+                        if (selectedCameraId) {
+                            console.log("Пробуем запасной вариант с любой камерой");
+                            selectedCameraId = '';
+                            startCamera();
+                        } else {
+                            messageDiv.textContent = "Доступ к камере не получен. Пожалуйста, разрешите доступ к камере и попробуйте снова.";
+                            setTimeout(() => {
+                                messageDiv.style.display = "none";
+                            }, 3000);
+                        }
                     });
             } else {
                 messageDiv.textContent = "Камера не поддерживается в вашем браузере.";
@@ -180,13 +371,12 @@
             }
         }
 
+        // Остановка камеры
         function stopCamera() {
             if (video && video.srcObject) {
                 video.srcObject.getTracks().forEach(track => track.stop());
                 cameraActive = false;
                 cameraButton.textContent = "Включить камеру";
-                cameraButton.removeEventListener("click", stopCamera);
-                cameraButton.addEventListener("click", startCamera);
 
                 // Очистить видео канвас и силуэт
                 videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
@@ -231,18 +421,22 @@
             const videoHeight = video.videoHeight;
 
             if (videoWidth && videoHeight) {
-                // Расчет размера и положения для сохранения пропорций
-                // Возвращаем max для заполнения всего экрана
-                const scale = Math.max(
-                    videoCanvas.width / videoWidth,
-                    videoCanvas.height / videoHeight
-                );
-
-                // Центрирование видео
-                const x = (videoCanvas.width - videoWidth * scale) / 2;
-                // Немного сдвигаем видео вверх, чтобы нижняя часть не обрезалась
-                const y = (videoCanvas.height - videoHeight * scale) / 2 - 20;
-
+                // Вычисляем размеры и положение для заполнения по ширине
+                // с сохранением пропорций
+                const videoAspectRatio = videoWidth / videoHeight;
+                const canvasAspectRatio = videoCanvas.width / videoCanvas.height;
+                
+                let drawWidth, drawHeight, offsetX, offsetY;
+                
+                // Подгоняем по ширине, жертвуя частью высоты если нужно
+                drawWidth = videoCanvas.width;
+                drawHeight = drawWidth / videoAspectRatio;
+                offsetX = 0;
+                
+                // Если высота получилась больше высоты canvas, центрируем по вертикали
+                // Если меньше - тоже центрируем
+                offsetY = (videoCanvas.height - drawHeight) / 2;
+                
                 // Очистка канваса
                 videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
 
@@ -250,10 +444,12 @@
                 videoCtx.save();
                 videoCtx.translate(videoCanvas.width, 0);
                 videoCtx.scale(-1, 1);
+                
+                // Рисуем видео с сохранением пропорций
                 videoCtx.drawImage(
                     video,
                     0, 0, videoWidth, videoHeight,
-                    videoCanvas.width - videoWidth * scale - x, y, videoWidth * scale, videoHeight * scale
+                    0, offsetY, drawWidth, drawHeight
                 );
 
                 // Добавим контраст для лучшего обнаружения светлых областей
@@ -302,6 +498,9 @@
                 }
             }
         }
+
+        // Переменная для хранения интервала
+        let renderInterval = null;
 
         // Главная функция отрисовки
         function draw() {
@@ -407,11 +606,6 @@
                     }
                 }
             }
-        }
-        
-        // Убираем старую функцию drawSilhouetteDrops, так как теперь эффект дождя интегрирован в drawSilhouette
-        function drawSilhouetteDrops() {
-            // Функция больше не используется
         }
 
         // Отрисовка матричного дождя
@@ -549,51 +743,23 @@
 
         // Обработчик изменения размера окна
         window.addEventListener('resize', function() {
+            // Обновляем размеры холстов
             matrixCanvas.width = videoCanvas.width = silhouetteCanvas.width = window.innerWidth;
             matrixCanvas.height = videoCanvas.height = silhouetteCanvas.height = window.innerHeight;
 
-            // Пересчитываем количество столбцов и строк
-            const newColumns = Math.ceil(matrixCanvas.width/fontSize);
-            const newRows = Math.ceil(matrixCanvas.height/fontSize);
+            // Обновляем адаптивные размеры
+            updateSizes();
 
-            // Обновляем массивы, если изменилось количество столбцов
-            if (newColumns !== columns) {
-                // Обновляем капли
-                const newDrops = [];
-                for(let x = 0; x < newColumns; x++) {
-                    if (x < drops.length) {
-                        newDrops[x] = drops[x];
-                    } else {
-                        newDrops[x] = 1;
-                    }
-                }
-                drops = newDrops;
-                
-                // Обновляем силуэтные капли
-                const newSilhouetteDrops = [];
-                for(let x = 0; x < newColumns; x++) {
-                    if (x < silhouetteDrops.length) {
-                        newSilhouetteDrops[x] = silhouetteDrops[x];
-                    } else {
-                        newSilhouetteDrops[x] = 0;
-                    }
-                }
-                silhouetteDrops = newSilhouetteDrops;
-
-                // Обновляем силуэт
-                if (cameraActive) {
-                    silhouetteData = new Uint8Array(newColumns * newRows);
-                    silhouetteMatrix = Array(newRows * newColumns).fill(null);
-                }
-            }
-
+            // Пересчитываем позиции слова
             if (mode !== "rain") {
                 calculateWordPositions();
             }
         });
 
-        // Запускаем анимацию
-        setInterval(draw, 33); // ~30fps
+        // Запускаем анимацию только если она еще не запущена
+        if (!renderInterval) {
+            renderInterval = setInterval(draw, 33); // ~30fps
+        }
         </script>
     </body>
 </html>

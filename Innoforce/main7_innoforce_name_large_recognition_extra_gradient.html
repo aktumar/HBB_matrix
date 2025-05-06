@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Матричный дождь с INNOFORCE</title>
+    <title>Матричный дождь с INNOFORCE (адаптивный)</title>
     <style>
         body {
             margin: 0;
@@ -29,9 +29,8 @@
             left: 0;
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: contain; /* Изменено с cover на contain для сохранения пропорций */
             opacity: 0;
-            /* Убираем отзеркаливание видео, так как теперь мы явно отзеркаливаем маску */
             z-index: 10;
         }
 
@@ -78,17 +77,24 @@
         matrixCanvas.width = window.innerWidth;
         matrixCanvas.height = window.innerHeight;
 
+        // Базовый масштаб для адаптивного размера шрифта
+        const baseWidth = 1920;
+        const baseHeight = 1080;
+        const baseFontSize = 12;
+
+        // Расчет адаптивного размера шрифта
+        let fontSize = Math.max(8, Math.round(baseFontSize * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight)));
+
         // Настройки матрицы
-        const fontSize = 12; // Увеличенный размер шрифта для более плотного дождя
-        const columns = Math.floor(matrixCanvas.width / fontSize);
-        const rows = Math.floor(matrixCanvas.height / fontSize);
+        let columns = Math.floor(matrixCanvas.width / fontSize);
+        let rows = Math.floor(matrixCanvas.height / fontSize);
 
         // Символы матрицы
         const symbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,./<>?アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
         const symbolArray = symbols.split('');
 
         // Капли дождя
-        let drops = Array(columns).fill(0).map(() => Math.floor(Math.random() * rows));
+        let drops = [];
 
         // Для слова INNOFORCE
         const word = "INNOFORCE";
@@ -107,27 +113,17 @@
 
         // Инициализация
         window.addEventListener('load', async () => {
+            // Устанавливаем адаптивный размер шрифта
+            updateFontSize();
+            
             // Рассчитываем позиции для слова
             calculateWordPositions();
 
             // Инициализируем эффект дождя от букв
             initWordRain();
 
-            // Инициализируем капли дождя с экстремально высокой плотностью (в 1.5 раза больше предыдущей)
-            drops = [];
-
-            // Основные капли
-            for (let i = 0; i < columns; i++) {
-                // 3 капли на каждую колонку вместо 2
-                drops.push(Math.floor(Math.random() * rows));
-                drops.push(Math.floor(Math.random() * rows));
-                drops.push(Math.floor(Math.random() * rows));
-            }
-
-            // Дополнительные капли для еще большей плотности
-            for (let i = 0; i < columns * 3; i++) {
-                drops.push(Math.floor(Math.random() * rows));
-            }
+            // Инициализируем капли дождя с экстремально высокой плотностью
+            initRaindrops();
 
             // Начинаем анимацию
             requestAnimationFrame(animate);
@@ -148,6 +144,32 @@
             }, 1000);
         });
 
+        // Функция инициализации капель дождя
+        function initRaindrops() {
+            drops = [];
+
+            // Основные капли
+            for (let i = 0; i < columns; i++) {
+                // 3 капли на каждую колонку
+                drops.push(Math.floor(Math.random() * rows));
+                drops.push(Math.floor(Math.random() * rows));
+                drops.push(Math.floor(Math.random() * rows));
+            }
+
+            // Дополнительные капли для еще большей плотности
+            for (let i = 0; i < columns * 3; i++) {
+                drops.push(Math.floor(Math.random() * rows));
+            }
+        }
+
+        // Обновление размера шрифта
+        function updateFontSize() {
+            fontSize = Math.max(8, Math.round(baseFontSize * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight)));
+            columns = Math.floor(matrixCanvas.width / fontSize);
+            rows = Math.floor(matrixCanvas.height / fontSize);
+            humanMask = new Uint8Array(columns * rows);
+        }
+
         // Обработчики событий
         cameraBtn.addEventListener('click', toggleCamera);
         window.addEventListener('resize', handleResize);
@@ -166,18 +188,65 @@
                 }
 
                 try {
+                    // Сначала получаем список всех доступных видеоустройств
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                    
+                    // Выбираем конкретное устройство (вторую камеру, если есть)
+                    let deviceId;
+                    if (videoDevices.length >= 2) {
+                        // Используем вторую камеру из списка
+                        deviceId = videoDevices[1].deviceId;
+                        console.log("Используем вторую камеру:", videoDevices[1].label);
+                    } else if (videoDevices.length === 1) {
+                        // Если есть только одна камера, используем её
+                        deviceId = videoDevices[0].deviceId;
+                        console.log("Используем единственную камеру:", videoDevices[0].label);
+                    } else {
+                        // Если нет камер, выбрасываем ошибку
+                        throw new Error("Камеры не обнаружены");
+                    }
+
+                    // Запрашиваем доступ к выбранной камере с указанием разрешения
                     const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'user' }
+                        video: {
+                            deviceId: { exact: deviceId },
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        }
                     });
 
                     video.srcObject = stream;
                     cameraActive = true;
                     cameraBtn.textContent = "Выключить камеру";
 
-                    // Начинаем обнаружение
-                    detectHuman();
+                    // Ждем, пока видео будет готово
+                    video.onloadedmetadata = function() {
+                        console.log(`Видео размеры: ${video.videoWidth}x${video.videoHeight}`);
+                        // Начинаем обнаружение
+                        detectHuman();
+                    };
                 } catch (error) {
                     console.error("Ошибка доступа к камере:", error);
+                    
+                    // Резервный вариант: попробуем использовать любую доступную камеру
+                    try {
+                        const fallbackStream = await navigator.mediaDevices.getUserMedia({
+                            video: true
+                        });
+                        
+                        video.srcObject = fallbackStream;
+                        cameraActive = true;
+                        cameraBtn.textContent = "Выключить камеру";
+                        
+                        video.onloadedmetadata = function() {
+                            console.log(`Резервное видео размеры: ${video.videoWidth}x${video.videoHeight}`);
+                            detectHuman();
+                        };
+                    } catch (fallbackError) {
+                        console.error("Не удалось получить доступ к запасной камере:", fallbackError);
+                        alert("Не удалось получить доступ к камере. Пожалуйста, проверьте настройки.");
+                    }
                 }
             } else {
                 const stream = video.srcObject;
@@ -281,22 +350,25 @@
                     // Заменяем данные в segmentation
                     segmentation.data = flippedData;
 
-                    // Преобразуем сегментацию в нашу матрицу
-                    const videoRatio = video.videoWidth / video.videoHeight;
-                    const canvasRatio = matrixCanvas.width / matrixCanvas.height;
+                    // Преобразуем сегментацию в нашу матрицу с учетом адаптивного отображения
+                    const videoAspectRatio = video.videoWidth / video.videoHeight;
+                    const canvasAspectRatio = matrixCanvas.width / matrixCanvas.height;
 
                     let drawWidth, drawHeight, offsetX, offsetY;
 
-                    if (videoRatio > canvasRatio) {
-                        drawHeight = matrixCanvas.height;
-                        drawWidth = video.videoWidth * (drawHeight / video.videoHeight);
-                        offsetX = (matrixCanvas.width - drawWidth) / 2;
-                        offsetY = 0;
-                    } else {
+                    // Вычисляем размеры для отображения с сохранением пропорций (contain)
+                    if (videoAspectRatio > canvasAspectRatio) {
+                        // Видео шире, чем холст
                         drawWidth = matrixCanvas.width;
-                        drawHeight = video.videoHeight * (drawWidth / video.videoWidth);
+                        drawHeight = drawWidth / videoAspectRatio;
                         offsetX = 0;
                         offsetY = (matrixCanvas.height - drawHeight) / 2;
+                    } else {
+                        // Видео выше, чем холст
+                        drawHeight = matrixCanvas.height;
+                        drawWidth = drawHeight * videoAspectRatio;
+                        offsetX = (matrixCanvas.width - drawWidth) / 2;
+                        offsetY = 0;
                     }
 
                     // Заполняем матрицу маской человека с дополнительной обработкой для усиления контраста
@@ -307,29 +379,35 @@
 
                     for (let y = 0; y < rows; y++) {
                         for (let x = 0; x < columns; x++) {
-                            const pixelX = Math.floor(x * fontSize - offsetX);
-                            const pixelY = Math.floor(y * fontSize - offsetY);
-
-                            // Нормализуем координаты для mask
-                            const normalizedX = Math.floor((pixelX / drawWidth) * video.videoWidth);
-                            const normalizedY = Math.floor((pixelY / drawHeight) * video.videoHeight);
-
-                            // Проверяем, что координаты в пределах видео и маски
-                            if (normalizedX >= 0 && normalizedX < video.videoWidth &&
-                                normalizedY >= 0 && normalizedY < video.videoHeight) {
-
-                                const maskIndex = normalizedY * video.videoWidth + normalizedX;
-
-                                // Используем более чувствительное обнаружение
-                                if (maskIndex < segmentation.data.length &&
-                                    (segmentation.data[maskIndex] ||
-                                     // Проверяем соседние пиксели для сглаживания
-                                     (normalizedX > 0 && segmentation.data[maskIndex - 1]) ||
-                                     (normalizedX < video.videoWidth - 1 && segmentation.data[maskIndex + 1]) ||
-                                     (normalizedY > 0 && segmentation.data[maskIndex - video.videoWidth]) ||
-                                     (normalizedY < video.videoHeight - 1 && segmentation.data[maskIndex + video.videoWidth]))) {
-
-                                    humanMask[y * columns + x] = 1;
+                            // Вычисляем координаты на холсте
+                            const canvasX = x * fontSize;
+                            const canvasY = y * fontSize;
+                            
+                            // Проверяем, находится ли точка в области видео
+                            if (canvasX >= offsetX && canvasX < offsetX + drawWidth &&
+                                canvasY >= offsetY && canvasY < offsetY + drawHeight) {
+                                
+                                // Преобразуем координаты холста в координаты видео
+                                const videoX = Math.floor(((canvasX - offsetX) / drawWidth) * video.videoWidth);
+                                const videoY = Math.floor(((canvasY - offsetY) / drawHeight) * video.videoHeight);
+                                
+                                // Проверяем, что координаты в пределах видео
+                                if (videoX >= 0 && videoX < video.videoWidth &&
+                                    videoY >= 0 && videoY < video.videoHeight) {
+                                    
+                                    const maskIndex = videoY * video.videoWidth + videoX;
+                                    
+                                    // Используем более чувствительное обнаружение
+                                    if (maskIndex < segmentation.data.length &&
+                                        (segmentation.data[maskIndex] ||
+                                         // Проверяем соседние пиксели для сглаживания
+                                         (videoX > 0 && segmentation.data[maskIndex - 1]) ||
+                                         (videoX < video.videoWidth - 1 && segmentation.data[maskIndex + 1]) ||
+                                         (videoY > 0 && segmentation.data[maskIndex - video.videoWidth]) ||
+                                         (videoY < video.videoHeight - 1 && segmentation.data[maskIndex + video.videoWidth]))) {
+                                        
+                                        humanMask[y * columns + x] = 1;
+                                    }
                                 }
                             }
                         }
@@ -391,9 +469,6 @@
             // Рисуем слово INNOFORCE
             drawWord();
 
-            // Рисуем дождь от букв
-            drawWordRain();
-
             // Продолжаем анимацию
             requestAnimationFrame(animate);
         }
@@ -453,7 +528,7 @@
                 }
             }
 
-            // Для каждой капли (теперь их в 6 раз больше от изначального количества)
+            // Для каждой капли
             for (let idx = 0; idx < drops.length; idx++) {
                 const i = idx % columns; // Колонка
                 const dropIdx = idx; // Индекс в массиве drops
@@ -464,25 +539,19 @@
                 // Проверяем, находится ли эта позиция в силуэте человека
                 const isHuman = humanMask[Math.floor(drops[dropIdx]) * columns + i] === 1;
 
-                // Проверяем, не пересекается ли с позицией слова
-                const isWord = false; // Больше не используем старые позиции слова
-
-                // Если это не позиция слова, рисуем каплю дождя
-                if (!isWord) {
-                    // Устанавливаем цвет и шрифт
-                    if (isHuman) {
-                        // Используем плавный градиент в зависимости от позиции
-                        const normalizedY = drops[dropIdx] / rows;
-                        matrixCtx.fillStyle = getSmoothGradientColor(normalizedY);
-                        matrixCtx.font = "bold " + (fontSize + 1) + "px monospace";
-                    } else {
-                        matrixCtx.fillStyle = "#0F0"; // Зеленый для фона
-                        matrixCtx.font = fontSize + "px monospace";
-                    }
-
-                    // Рисуем символ
-                    matrixCtx.fillText(symbol, i * fontSize, drops[dropIdx] * fontSize);
+                // Устанавливаем цвет и шрифт
+                if (isHuman) {
+                    // Используем плавный градиент в зависимости от позиции
+                    const normalizedY = drops[dropIdx] / rows;
+                    matrixCtx.fillStyle = getSmoothGradientColor(normalizedY);
+                    matrixCtx.font = "bold " + (fontSize + 1) + "px monospace";
+                } else {
+                    matrixCtx.fillStyle = "#0F0"; // Зеленый для фона
+                    matrixCtx.font = fontSize + "px monospace";
                 }
+
+                // Рисуем символ
+                matrixCtx.fillText(symbol, i * fontSize, drops[dropIdx] * fontSize);
 
                 // Сбрасываем каплю, если она достигла низа
                 if (drops[dropIdx] * fontSize > matrixCanvas.height && Math.random() > 0.92) { // Ещё более быстрое обновление
@@ -504,8 +573,8 @@
                 "rgb(3,180,125)"     // Зеленый
             ];
 
-            // Увеличиваем размер слова в 10 раз
-            const wordFontSize = fontSize * 10; // Огромный размер для INNOFORCE
+            // Увеличиваем размер слова пропорционально размеру шрифта
+            const wordFontSize = fontSize * 10; // Крупный размер для INNOFORCE
             matrixCtx.font = "bold " + wordFontSize + "px monospace";
 
             // Перерасчитываем позиции для большого слова
@@ -570,39 +639,25 @@
             }
         }
 
-        // Рисуем дождь от букв слова
-        function drawWordRain() {
-            // Функция отключена - не рисуем дождь от INNOFORCE
-            // Это делает слово более четким и убирает лишний визуальный шум
-        }
-
         // Обработка изменения размеров окна
         function handleResize() {
+            // Обновляем размеры канваса
             matrixCanvas.width = window.innerWidth;
             matrixCanvas.height = window.innerHeight;
-
-            const newColumns = Math.floor(matrixCanvas.width / fontSize);
-            const newRows = Math.floor(matrixCanvas.height / fontSize);
-
+            
+            // Обновляем адаптивный размер шрифта
+            updateFontSize();
+            
             // Обновляем капли дождя
-            const newDrops = Array(newColumns).fill(0);
-            for (let i = 0; i < newColumns; i++) {
-                if (i < drops.length) {
-                    newDrops[i] = drops[i];
-                } else {
-                    newDrops[i] = Math.floor(Math.random() * newRows);
-                }
-            }
-            drops = newDrops;
-
-            // Обновляем маску человека
-            humanMask = new Uint8Array(newColumns * newRows);
+            initRaindrops();
 
             // Пересчитываем позиции слова
             calculateWordPositions();
 
             // Обновляем эффект дождя от букв
             initWordRain();
+            
+            console.log(`Размер экрана: ${window.innerWidth}x${window.innerHeight}, размер шрифта: ${fontSize}`);
         }
     </script>
 </body>

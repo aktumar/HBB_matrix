@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <style>
+            /* basic reset */
+            * {
+                margin: 0;
+                padding: 0;
+            }
+
+            body {
+                background: black;
+                overflow: hidden;
+                height: 100vh;
+                font-family: monospace;
+                color: #0F0;
+            }
+
+            canvas {
+                display: block;
+                position: absolute;
+                top: 0;
+                left: 0;
+            }
+
+            #videoCanvas {
+                z-index: 10;
+                /* Скрываем видео полностью */
+                display: none;
+            }
+
+            #matrixCanvas {
+                z-index: 20;
+            }
+
+            #silhouetteCanvas {
+                z-index: 30;
+                /* Полностью прозрачный холст для силуэта */
+                opacity: 1;
+                pointer-events: none;
+            }
+
+            #controls {
+                position: absolute;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 40;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+                font-family: monospace;
+                background-color: rgba(0, 20, 0, 0.7);
+                padding: 10px 15px;
+                border-radius: 8px;
+                border: 1px solid #0F0;
+            }
+
+            #cameraButton {
+                padding: 10px 20px;
+                background-color: rgba(0, 50, 0, 0.7);
+                color: #0F0;
+                border: 1px solid #0F0;
+                cursor: pointer;
+                font-family: monospace;
+                font-size: 16px;
+                border-radius: 5px;
+            }
+
+            #cameraButton:hover {
+                background-color: rgba(0, 80, 0, 0.9);
+            }
+
+            #cameraSelect {
+                padding: 5px 10px;
+                background-color: rgba(0, 50, 0, 0.7);
+                color: #0F0;
+                border: 1px solid #0F0;
+                cursor: pointer;
+                font-family: monospace;
+                font-size: 14px;
+                border-radius: 5px;
+                width: 220px;
+                display: none;
+            }
+
+            #sensitivityControl {
+                display: flex;
+                align-items: center;
+                width: 100%;
+                margin-top: 5px;
+            }
+
+            #sensitivityLabel {
+                font-size: 14px;
+                color: #0F0;
+                margin-right: 10px;
+                min-width: 120px;
+            }
+
+            #sensitivitySlider {
+                flex-grow: 1;
+                height: 5px;
+                background: rgba(0, 255, 0, 0.3);
+                outline: none;
+                -webkit-appearance: none;
+                border-radius: 5px;
+            }
+
+            #sensitivitySlider::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                appearance: none;
+                width: 15px;
+                height: 15px;
+                background: #0F0;
+                cursor: pointer;
+                border-radius: 50%;
+            }
+
+            #sensitivitySlider::-moz-range-thumb {
+                width: 15px;
+                height: 15px;
+                background: #0F0;
+                cursor: pointer;
+                border-radius: 50%;
+                border: none;
+            }
+
+            #sensitivityValue {
+                margin-left: 10px;
+                font-size: 14px;
+                color: #0F0;
+                min-width: 30px;
+                text-align: right;
+            }
+
+            #message {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: #0F0;
+                font-size: 24px;
+                text-align: center;
+                z-index: 40;
+                padding: 20px;
+                background-color: rgba(0, 0, 0, 0.7);
+                border: 1px solid #0F0;
+                display: none;
+                max-width: 80%;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="videoCanvas"></canvas>
+        <canvas id="matrixCanvas"></canvas>
+        <canvas id="silhouetteCanvas"></canvas>
+        <div id="controls">
+            <select id="cameraSelect"></select>
+            <button id="cameraButton">Включить камеру</button>
+            <div id="sensitivityControl">
+                <div id="sensitivityLabel">Чувствительность:</div>
+                <input type="range" id="sensitivitySlider" min="20" max="180" value="80">
+                <div id="sensitivityValue">80</div>
+            </div>
+        </div>
+        <div id="message">Нажмите "Разрешить" в запросе камеры для продолжения</div>
+
+        <script>
+        // Основные элементы
+        const matrixCanvas = document.getElementById("matrixCanvas");
+        const matrixCtx = matrixCanvas.getContext("2d");
+        const videoCanvas = document.getElementById("videoCanvas");
+        const videoCtx = videoCanvas.getContext("2d");
+        const silhouetteCanvas = document.getElementById("silhouetteCanvas");
+        const silhouetteCtx = silhouetteCanvas.getContext("2d");
+        const cameraButton = document.getElementById("cameraButton");
+        const cameraSelect = document.getElementById("cameraSelect");
+        const messageDiv = document.getElementById("message");
+        const sensitivitySlider = document.getElementById("sensitivitySlider");
+        const sensitivityValue = document.getElementById("sensitivityValue");
+
+        // Базовый масштаб для адаптивного размера шрифта
+        const baseWidth = 1920;
+        const baseHeight = 1080;
+        const baseFontSize = 12;
+
+        // Вычисляем адаптивный размер шрифта
+        let fontSize = Math.max(8, Math.round(baseFontSize * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight)));
+        
+        // Настройки канваса
+        matrixCanvas.width = videoCanvas.width = silhouetteCanvas.width = window.innerWidth;
+        matrixCanvas.height = videoCanvas.height = silhouetteCanvas.height = window.innerHeight;
+
+        // Настройки видео
+        let video;
+        let silhouetteData;
+        let cameraActive = false;
+        let silhouetteThreshold = parseInt(sensitivitySlider.value); // Порог для светлых областей
+        
+        // Переменные для выбора камеры
+        let cameras = [];
+        let selectedCameraId = '';
+        const useSecondCameraByDefault = true; // Автоматически выбирать вторую камеру
+
+        // Настройки матрицы
+        const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
+        const charactersArray = characters.split("");
+        let columns = Math.ceil(matrixCanvas.width/fontSize);
+        let rows = Math.ceil(matrixCanvas.height/fontSize);
+
+        // Отдельные символы для силуэта - только числа и буквы X для более чёткого эффекта
+        const silhouetteChars = "01X3456789X";
+        const silhouetteCharsArray = silhouetteChars.split("");
+
+        // Капли дождя
+        let drops = [];
+        for(let x = 0; x < columns; x++) {
+            drops[x] = 1;
+        }
+
+        // Слово INNOFORCE
+        const word = "INNOFORCE";
+        let wordPositions = [];
+        let mode = "rain";
+        let modeStartTime = Date.now();
+        const formationDuration = 2000;
+        const showDuration = 3000;
+        const dissolveDuration = 2000;
+        const rainDuration = 5000;
+
+        // Матрица силуэта - будет содержать символы для отображения
+        let silhouetteMatrix = Array(rows * columns).fill(null);
+        
+        // Дождь из силуэта
+        let silhouetteDrops = [];
+        for(let x = 0; x < columns; x++) {
+            silhouetteDrops[x] = 0; // начинаем с 0, чтобы сразу появились
+        }
+
+        // Обработчик для ползунка чувствительности
+        sensitivitySlider.addEventListener("input", function() {
+            silhouetteThreshold = parseInt(this.value);
+            sensitivityValue.textContent = this.value;
+        });
+
+        // Перечисление доступных камер
+        async function enumerateCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                cameras = devices.filter(device => device.kind === 'videoinput');
+                
+                // Если камер нет, выводим сообщение
+                if (cameras.length === 0) {
+                    console.error("Камеры не обнаружены");
+                    return;
+                }
+                
+                // Очищаем выпадающий список
+                cameraSelect.innerHTML = '';
+                
+                // Заполняем выпадающий список
+                cameras.forEach((camera, index) => {
+                    const option = document.createElement('option');
+                    option.value = camera.deviceId;
+                    option.text = camera.label || `Камера ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+                
+                // Если у нас есть более одной камеры, показываем селектор
+                if (cameras.length > 1) {
+                    cameraSelect.style.display = 'block';
+                    
+                    // Если нужно всегда использовать вторую камеру
+                    if (useSecondCameraByDefault && cameras.length >= 2) {
+                        cameraSelect.selectedIndex = 1; // Выбираем вторую камеру (индекс 1)
+                        selectedCameraId = cameras[1].deviceId;
+                    }
+                } else {
+                    // Если камера только одна, скрываем селектор
+                    cameraSelect.style.display = 'none';
+                    selectedCameraId = cameras[0].deviceId;
+                }
+                
+                console.log("Доступные камеры:", cameras.map(c => c.label || "Неизвестная камера"));
+                console.log("Выбрана камера:", selectedCameraId);
+            } catch (error) {
+                console.error("Ошибка при получении списка камер:", error);
+            }
+        }
+
+        // Инициализация при загрузке страницы
+        window.addEventListener('load', function() {
+            // Получаем список камер
+            enumerateCameras();
+            
+            // Обновляем адаптивные размеры
+            updateSizes();
+            
+            // Рассчитываем позиции для слова
+            calculateWordPositions();
+        });
+
+        // Обработчики событий
+        cameraButton.addEventListener("click", toggleCamera);
+        cameraSelect.addEventListener("change", function() {
+            selectedCameraId = this.value;
+            // Если камера уже активна, перезапускаем её с новым выбором
+            if (cameraActive) {
+                stopCamera();
+                startCamera();
+            }
+        });
+
+        // Функция обновления размеров
+        function updateSizes() {
+            // Обновляем размер шрифта на основе размера экрана
+            fontSize = Math.max(8, Math.round(baseFontSize * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight)));
+            
+            // Пересчитываем количество столбцов и строк
+            columns = Math.ceil(matrixCanvas.width / fontSize);
+            rows = Math.ceil(matrixCanvas.height / fontSize);
+            
+            console.log(`Размер экрана: ${window.innerWidth}x${window.innerHeight}, шрифт: ${fontSize}, столбцов: ${columns}, строк: ${rows}`);
+            
+            // Обновляем силуэт
+            silhouetteData = new Uint8Array(columns * rows);
+            silhouetteMatrix = Array(rows * columns).fill(null);
+            
+            // Обновляем капли
+            if (drops.length !== columns) {
+                const newDrops = [];
+                for(let x = 0; x < columns; x++) {
+                    if (x < drops.length) {
+                        newDrops[x] = drops[x];
+                    } else {
+                        newDrops[x] = 1;
+                    }
+                }
+                drops = newDrops;
+            }
+            
+            // Обновляем силуэтные капли
+            if (silhouetteDrops.length !== columns) {
+                const newSilhouetteDrops = [];
+                for(let x = 0; x < columns; x++) {
+                    if (x < silhouetteDrops.length) {
+                        newSilhouetteDrops[x] = silhouetteDrops[x];
+                    } else {
+                        newSilhouetteDrops[x] = 0;
+                    }
+                }
+                silhouetteDrops = newSilhouetteDrops;
+            }
+        }
+
+        // Переключение камеры
+        function toggleCamera() {
+            if (!cameraActive) {
+                startCamera();
+            } else {
+                stopCamera();
+            }
+        }
+
+        // Запуск камеры
+        function startCamera() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                messageDiv.style.display = "block";
+                
+                // Определяем, какую камеру использовать
+                let constraints;
+                if (selectedCameraId) {
+                    constraints = {
+                        video: {
+                            deviceId: { exact: selectedCameraId },
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        }
+                    };
+                    console.log("Используем выбранную камеру:", selectedCameraId);
+                } else {
+                    constraints = {
+                        video: {
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        }
+                    };
+                    console.log("Используем любую доступную камеру");
+                }
+
+                navigator.mediaDevices.getUserMedia(constraints)
+                    .then(function(stream) {
+                        messageDiv.style.display = "none";
+                        cameraButton.textContent = "Отключить камеру";
+
+                        video = document.createElement('video');
+                        video.srcObject = stream;
+                        video.play();
+
+                        cameraActive = true;
+
+                        // Создаем массив для хранения силуэта
+                        silhouetteData = new Uint8Array(columns * rows);
+                        
+                        // Запускаем рендеринг
+                        if (!renderInterval) {
+                            renderInterval = setInterval(draw, 33); // ~30fps
+                        }
+                        
+                        // Показываем ползунок чувствительности
+                        document.getElementById("sensitivityControl").style.display = "flex";
+                        
+                        // Выводим информацию о камере после её загрузки
+                        video.onloadedmetadata = function() {
+                            console.log(`Размеры видео: ${video.videoWidth}x${video.videoHeight}`);
+                        };
+                    })
+                    .catch(function(error) {
+                        console.error("Ошибка доступа к камере:", error);
+                        
+                        // Пробуем использовать любую доступную камеру как запасной вариант
+                        if (selectedCameraId) {
+                            console.log("Пробуем запасной вариант с любой камерой");
+                            selectedCameraId = '';
+                            startCamera();
+                        } else {
+                            messageDiv.textContent = "Доступ к камере не получен. Пожалуйста, разрешите доступ к камере и попробуйте снова.";
+                            setTimeout(() => {
+                                messageDiv.style.display = "none";
+                            }, 3000);
+                        }
+                    });
+            } else {
+                messageDiv.textContent = "Камера не поддерживается в вашем браузере.";
+                messageDiv.style.display = "block";
+                setTimeout(() => {
+                    messageDiv.style.display = "none";
+                }, 3000);
+            }
+        }
+
+        // Остановка камеры
+        function stopCamera() {
+            if (video && video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                cameraActive = false;
+                cameraButton.textContent = "Включить камеру";
+
+                // Очистить видео канвас и силуэт
+                videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+                silhouetteCtx.clearRect(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
+                silhouetteMatrix = Array(rows * columns).fill(null);
+                
+                // Сбросить силуэтные капли
+                for(let x = 0; x < columns; x++) {
+                    silhouetteDrops[x] = 0; 
+                }
+            }
+        }
+
+        // Рассчитываем позиции для слова
+        function calculateWordPositions() {
+            const wordWidth = word.length * fontSize;
+            const startX = Math.floor((matrixCanvas.width - wordWidth) / 2 / fontSize);
+            const centerY = Math.floor(matrixCanvas.height / 2 / fontSize);
+
+            wordPositions = [];
+            for (let i = 0; i < word.length; i++) {
+                wordPositions.push({
+                    x: startX + i,
+                    y: centerY,
+                    letter: word[i],
+                    originalX: startX + i,
+                    originalY: centerY,
+                    // Для анимации формирования - начинаем с верхней части экрана
+                    startX: startX + i, // Теперь буквы падают сверху, начиная с правильной Х-позиции
+                    startY: -5 - Math.floor(Math.random() * 10), // Разные высоты для каждой буквы
+                    progress: 0
+                });
+            }
+        }
+
+        // Обработка видео для создания силуэта
+        function processVideo() {
+            if (!cameraActive || !video) return;
+
+            // Рисуем видео на скрытом канвасе
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+
+            if (videoWidth && videoHeight) {
+                // Вычисляем размеры и положение для заполнения по ширине
+                // с сохранением пропорций
+                const videoAspectRatio = videoWidth / videoHeight;
+                const canvasAspectRatio = videoCanvas.width / videoCanvas.height;
+                
+                let drawWidth, drawHeight, offsetX, offsetY;
+                
+                // Подгоняем по ширине, жертвуя частью высоты если нужно
+                drawWidth = videoCanvas.width;
+                drawHeight = drawWidth / videoAspectRatio;
+                offsetX = 0;
+                
+                // Если высота получилась больше высоты canvas, центрируем по вертикали
+                // Если меньше - тоже центрируем
+                offsetY = (videoCanvas.height - drawHeight) / 2;
+                
+                // Очистка канваса
+                videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+
+                // Отразить видео как зеркало с увеличением контраста
+                videoCtx.save();
+                videoCtx.translate(videoCanvas.width, 0);
+                videoCtx.scale(-1, 1);
+                
+                // Рисуем видео с сохранением пропорций
+                videoCtx.drawImage(
+                    video,
+                    0, 0, videoWidth, videoHeight,
+                    0, offsetY, drawWidth, drawHeight
+                );
+
+                // Добавим контраст для лучшего обнаружения светлых областей
+                videoCtx.globalCompositeOperation = 'source-atop';
+                videoCtx.fillStyle = 'rgba(255, 255, 255, 0.2)'; // Увеличиваем контраст
+                videoCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
+                videoCtx.globalCompositeOperation = 'source-over';
+
+                videoCtx.restore();
+
+                // Получаем данные пикселей
+                const imageData = videoCtx.getImageData(0, 0, videoCanvas.width, videoCanvas.height);
+                const pixels = imageData.data;
+
+                // Очищаем матрицу силуэта
+                silhouetteMatrix = Array(rows * columns).fill(null);
+
+                // Пониженный порог для силуэта, чтобы захватить больше деталей
+                // Используем значение из ползунка
+                const adjustedThreshold = silhouetteThreshold;
+
+                // Обновляем силуэт - ищем светлые области
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < columns; x++) {
+                        // Исходный пиксель для этой ячейки матрицы
+                        const pixelX = Math.floor(x * fontSize);
+                        const pixelY = Math.floor(y * fontSize);
+
+                        if (pixelX < videoCanvas.width && pixelY < videoCanvas.height) {
+                            const i = (pixelY * videoCanvas.width + pixelX) * 4;
+
+                            // Яркость пикселя (простой расчет)
+                            const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+
+                            // Если яркость ВЫШЕ порога - считаем что это часть силуэта (светлые области)
+                            if (brightness > adjustedThreshold) {
+                                silhouetteData[y * columns + x] = 1;
+
+                                // Создаем случайный символ для силуэта
+                                const charIndex = Math.floor(Math.random() * silhouetteCharsArray.length);
+                                silhouetteMatrix[y * columns + x] = silhouetteCharsArray[charIndex];
+                            } else {
+                                silhouetteData[y * columns + x] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Переменная для хранения интервала
+        let renderInterval = null;
+
+        // Главная функция отрисовки
+        function draw() {
+            // Проверяем смену режимов
+            const currentTime = Date.now();
+            const elapsed = currentTime - modeStartTime;
+
+            if (mode === "rain" && elapsed >= rainDuration) {
+                mode = "forming";
+                modeStartTime = currentTime;
+                calculateWordPositions();
+            } else if (mode === "forming" && elapsed >= formationDuration) {
+                mode = "showing";
+                modeStartTime = currentTime;
+            } else if (mode === "showing" && elapsed >= showDuration) {
+                mode = "dissolving";
+                modeStartTime = currentTime;
+            } else if (mode === "dissolving" && elapsed >= dissolveDuration) {
+                mode = "rain";
+                modeStartTime = currentTime;
+            }
+
+            // Обрабатываем видео, если камера активна
+            if (cameraActive) {
+                processVideo();
+            }
+
+            // Затемняем фон для эффекта следа
+            matrixCtx.fillStyle = "rgba(0, 0, 0, 0.1)";
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+
+            matrixCtx.font = fontSize + "px monospace";
+
+            // Отрисовка в зависимости от режима
+            if (mode === "rain") {
+                drawRain();
+            } else if (mode === "forming") {
+                drawForming(elapsed / formationDuration);
+            } else if (mode === "showing") {
+                drawWord();
+            } else if (mode === "dissolving") {
+                drawDissolving(elapsed / dissolveDuration);
+            }
+
+            // Отрисовываем силуэт с эффектом дождя
+            if (cameraActive) {
+                drawSilhouette();
+            }
+        }
+
+        // Отрисовка силуэта с эффектом матричного дождя
+        function drawSilhouette() {
+            if (!cameraActive) return;
+
+            silhouetteCtx.clearRect(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
+            silhouetteCtx.font = "bold " + fontSize + "px monospace";
+            silhouetteCtx.fillStyle = "#0F0"; // Яркий зеленый цвет для силуэта
+
+            // Проходим по всем колонкам для рисования дождя
+            for (let x = 0; x < columns; x++) {
+                // В каждой колонке нам нужно определить "светлые" области силуэта
+                const silhouettePositions = [];
+                
+                // Собираем все позиции силуэта в текущей колонке
+                for (let y = 0; y < rows; y++) {
+                    if (silhouetteData[y * columns + x] === 1) {
+                        silhouettePositions.push(y);
+                    }
+                }
+                
+                // Если есть силуэт в этой колонке
+                if (silhouettePositions.length > 0) {
+                    // Перемещаем дождь вниз
+                    silhouetteDrops[x] += 0.5 + Math.random() * 0.5;
+                    
+                    // Если капля ушла за пределы экрана, возвращаем ее наверх
+                    if (silhouetteDrops[x] > rows) {
+                        silhouetteDrops[x] = 0;
+                    }
+                    
+                    // Целая часть позиции капли
+                    const dropPosition = Math.floor(silhouetteDrops[x]);
+                    
+                    // Рисуем дождь в области силуэта
+                    for (let i = 0; i < silhouettePositions.length; i++) {
+                        const position = silhouettePositions[i];
+                        
+                        // Определяем, нужно ли рисовать падающий символ или статичный символ силуэта
+                        if (position === dropPosition || 
+                            (position > 0 && position === dropPosition + 1) || 
+                            (position > 1 && position === dropPosition + 2)) {
+                            // Падающий символ с ярко-зеленым цветом
+                            silhouetteCtx.fillStyle = "#00FF00";
+                            const text = silhouetteCharsArray[Math.floor(Math.random() * silhouetteCharsArray.length)];
+                            silhouetteCtx.fillText(text, x * fontSize, position * fontSize);
+                        }
+                        else {
+                            // Обычный символ силуэта, чуть темнее
+                            silhouetteCtx.fillStyle = "#0C0";
+                            const text = silhouetteCharsArray[Math.floor(Math.random() * silhouetteCharsArray.length)];
+                            silhouetteCtx.fillText(text, x * fontSize, position * fontSize);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Отрисовка матричного дождя
+        function drawRain() {
+            matrixCtx.fillStyle = "#0F0"; // Зеленый цвет
+
+            for(let i = 0; i < drops.length; i++) {
+                // Случайный символ
+                const text = charactersArray[Math.floor(Math.random() * charactersArray.length)];
+
+                // Рисуем символ дождя
+                matrixCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+                // Возвращаем каплю наверх после прохода через экран
+                if(drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                // Увеличиваем позицию капли
+                drops[i]++;
+            }
+        }
+
+        // Отрисовка формирования слова - теперь буквы падают сверху
+        function drawForming(progress) {
+            // Продолжаем дождь на фоне
+            matrixCtx.fillStyle = "rgba(0, 80, 0, 0.5)"; // Тусклый зеленый
+
+            for(let i = 0; i < drops.length; i++) {
+                // Пропускаем, если эта колонка часть финальной позиции слова
+                if (wordPositions.some(pos => pos.originalX === i)) {
+                    continue;
+                }
+
+                const text = charactersArray[Math.floor(Math.random() * charactersArray.length)];
+                matrixCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+                if(drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+
+            // Отрисовка формирующихся букв с анимацией падающих сверху букв
+            matrixCtx.fillStyle = "#00FF00"; // Яркий зеленый для слова
+
+            for (let i = 0; i < wordPositions.length; i++) {
+                const pos = wordPositions[i];
+
+                // Все буквы начинаются сверху и падают вниз до своей позиции
+                const currentY = Math.floor(pos.startY + (pos.originalY - pos.startY) * progress);
+                
+                // Добавляем эффект скорости - сначала быстро, потом замедляется
+                const easeOutY = pos.startY + (pos.originalY - pos.startY) * 
+                               (1 - Math.pow(1 - progress, 3)); // cubic easing out
+                
+                // Рисуем букву падающую сверху
+                matrixCtx.fillText(pos.letter, pos.originalX * fontSize, easeOutY * fontSize);
+                
+                // Рисуем след из символов выше падающей буквы (эффект дождя)
+                if (progress < 0.9) { // когда буква почти достигла места, перестаем рисовать след
+                    const trailLength = 5; // длина следа
+                    matrixCtx.fillStyle = "rgba(0, 255, 0, 0.5)"; // полупрозрачный для следа
+                    
+                    for (let j = 1; j <= trailLength; j++) {
+                        if (easeOutY - j > 0) {
+                            const trailChar = charactersArray[Math.floor(Math.random() * charactersArray.length)];
+                            const trailOpacity = 0.7 - (j / trailLength * 0.6); // убывающая прозрачность
+                            matrixCtx.fillStyle = `rgba(0, 255, 0, ${trailOpacity})`;
+                            matrixCtx.fillText(trailChar, pos.originalX * fontSize, (easeOutY - j) * fontSize);
+                        }
+                    }
+                    
+                    matrixCtx.fillStyle = "#00FF00"; // возвращаем яркий цвет для основной буквы
+                }
+            }
+        }
+
+        // Отрисовка полностью сформированного слова
+        function drawWord() {
+            // Приглушенный фоновый дождь
+            matrixCtx.fillStyle = "rgba(0, 30, 0, 0.3)"; // Очень тусклый зеленый
+
+            for(let i = 0; i < drops.length; i++) {
+                if (wordPositions.some(pos => pos.originalX === i)) {
+                    continue;
+                }
+
+                const text = charactersArray[Math.floor(Math.random() * charactersArray.length)];
+                matrixCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+                if(drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+
+            // Рисуем слово с эффектом свечения
+            matrixCtx.fillStyle = "#00FF00"; // Зеленый
+            for (let i = 0; i < wordPositions.length; i++) {
+                const pos = wordPositions[i];
+                matrixCtx.fillText(pos.letter, pos.originalX * fontSize, pos.originalY * fontSize);
+            }
+        }
+
+        // Отрисовка растворения слова обратно в дождь
+        function drawDissolving(progress) {
+            // Постепенно возвращаем полный дождь
+            matrixCtx.fillStyle = "rgba(0, " + Math.floor(80 + 175 * progress) + ", 0, 0.5)";
+
+            for(let i = 0; i < drops.length; i++) {
+                const text = charactersArray[Math.floor(Math.random() * charactersArray.length)];
+
+                // Если здесь была буква, постепенно заменяем её
+                const wordLetter = wordPositions.find(pos => pos.originalX === i);
+                if (wordLetter && Math.random() > progress) {
+                    // Все еще показываем букву с уменьшающейся вероятностью
+                    matrixCtx.fillStyle = "rgba(0, 255, 0, " + (1 - progress) + ")";
+                    matrixCtx.fillText(wordLetter.letter, i * fontSize, wordLetter.originalY * fontSize);
+                    matrixCtx.fillStyle = "rgba(0, " + Math.floor(80 + 175 * progress) + ", 0, 0.5)";
+                } else {
+                    // Обычный символ дождя
+                    matrixCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+                }
+
+                if(drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+        }
+
+        // Обработчик изменения размера окна
+        window.addEventListener('resize', function() {
+            // Обновляем размеры холстов
+            matrixCanvas.width = videoCanvas.width = silhouetteCanvas.width = window.innerWidth;
+            matrixCanvas.height = videoCanvas.height = silhouetteCanvas.height = window.innerHeight;
+
+            // Обновляем адаптивные размеры
+            updateSizes();
+
+            // Пересчитываем позиции слова
+            if (mode !== "rain") {
+                calculateWordPositions();
+            }
+        });
+
+        // Запускаем анимацию только если она еще не запущена
+        if (!renderInterval) {
+            renderInterval = setInterval(draw, 33); // ~30fps
+        }
+        </script>
+    </body>
+</html>
