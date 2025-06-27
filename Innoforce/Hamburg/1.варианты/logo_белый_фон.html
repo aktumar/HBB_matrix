@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Матричный дождь с логотипом</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            font-family: monospace;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #matrixCanvas {
+            z-index: 20;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="matrixCanvas"></canvas>
+    <canvas id="logoCanvas"></canvas>
+
+    <script>
+        // Основные элементы
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        const logoCanvas = document.getElementById('logoCanvas');
+        const logoCtx = logoCanvas.getContext('2d', { willReadFrequently: true });
+
+        // Настройка размеров
+        function resizeCanvases() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+            logoCanvas.width = window.innerWidth;
+            logoCanvas.height = window.innerHeight;
+        }
+        
+        resizeCanvases();
+
+        // Настройки матрицы
+        const fontSize = 14; // Размер шрифта символов
+        let columns = Math.floor(matrixCanvas.width / fontSize);
+        let rows = Math.floor(matrixCanvas.height / fontSize);
+
+        // Символы матрицы
+        const symbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,./<>?アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン";
+        const symbolArray = symbols.split('');
+
+        // Капли дождя
+        let drops = [];
+
+        // Маска логотипа
+        let logoMask = new Uint8Array(columns * rows);
+        let logoLoaded = false;
+
+        // Время последнего кадра для анимации
+        let lastFrameTime = 0;
+        const frameRate = 30;
+
+        // Градиентные цвета для логотипа (бирюзово-голубые оттенки)
+        const gradientColors = [
+            [83, 167, 253],  // Голубой
+            [52, 152, 219],  // Другой оттенок голубого
+            [39, 229, 215],  // Бирюзовый
+            [26, 188, 156]   // Другой оттенок бирюзового
+        ];
+
+        // НАСТРОЙКИ ЦВЕТОВ ФОНА - ИЗМЕНИТЕ ЗДЕСЬ!
+        const backgroundRainColor = "rgba(150, 150, 150, 0.15)";
+        const backgroundRainColorFull = "#666"; 
+        
+        // Можете заменить на любые другие цвета:
+        // const backgroundRainColor = "rgba(255, 255, 255, 0.15)"; // Белый
+        // const backgroundRainColorFull = "#FFF"; // Белый
+        
+        // const backgroundRainColor = "rgba(255, 0, 255, 0.15)"; // Фиолетовый
+        // const backgroundRainColorFull = "#F0F"; // Фиолетовый
+        
+        // const backgroundRainColor = "rgba(255, 165, 0, 0.15)"; // Оранжевый
+        // const backgroundRainColorFull = "#FFA500"; // Оранжевый
+
+        // Функция для создания маски из изображения
+        function createMaskFromImage(img) {
+            // Проверяем, что изображение загружено
+            if (!img.complete || !img.naturalWidth) {
+                console.error("Изображение не загружено");
+                return;
+            }
+            
+            // Создаем временный невидимый холст для обработки изображения
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = logoCanvas.width;
+            tempCanvas.height = logoCanvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Рассчитываем размер логотипа чтобы он занимал 70% холста, сохраняя пропорции
+            const logoRatio = img.width / img.height;
+            let logoWidth, logoHeight;
+            
+            if (logoCanvas.width / logoCanvas.height > logoRatio) {
+                // Экран шире, чем логотип
+                logoHeight = logoCanvas.height * 0.7;
+                logoWidth = logoHeight * logoRatio;
+            } else {
+                // Экран уже, чем логотип
+                logoWidth = logoCanvas.width * 0.7;
+                logoHeight = logoWidth / logoRatio;
+            }
+            
+            // Вычисляем координаты для центрирования
+            const offsetX = (logoCanvas.width - logoWidth) / 2;
+            const offsetY = (logoCanvas.height - logoHeight) / 2;
+            
+            // Рисуем логотип на временном холсте (не видимом пользователю)
+            tempCtx.drawImage(img, offsetX, offsetY, logoWidth, logoHeight);
+            
+            // Получаем данные пикселей с временного холста
+            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const pixels = imageData.data;
+            
+            // Обновляем маску логотипа в соответствии с новыми размерами
+            logoMask = new Uint8Array(columns * rows);
+            
+            // Создаем маску с высокой детализацией
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < columns; x++) {
+                    // Координаты пикселя на холсте
+                    const canvasX = x * fontSize;
+                    const canvasY = y * fontSize;
+                    
+                    // Проверяем, что координаты внутри холста
+                    if (canvasX >= 0 && canvasX < tempCanvas.width && 
+                        canvasY >= 0 && canvasY < tempCanvas.height) {
+                        
+                        // Индекс в массиве пикселей (RGBA)
+                        const i = (canvasY * tempCanvas.width + canvasX) * 4;
+                        
+                        // Проверяем прозрачность (альфа-канал)
+                        const alpha = pixels[i + 3];
+                        
+                        // Учитываем непрозрачные пиксели
+                        if (alpha > 30) {
+                            logoMask[y * columns + x] = 1;
+                        }
+                    }
+                }
+            }
+            
+            // Применяем сглаживание краев для более плавного контура
+            const tempMask = new Uint8Array(logoMask.length);
+            for (let y = 1; y < rows - 1; y++) {
+                for (let x = 1; x < columns - 1; x++) {
+                    const idx = y * columns + x;
+                    
+                    // Подсчитываем количество соседних пикселей в маске
+                    let count = 0;
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            count += logoMask[(y + dy) * columns + (x + dx)];
+                        }
+                    }
+                    
+                    // Если более 2 соседей - это часть логотипа
+                    tempMask[idx] = (count >= 2) ? 1 : 0;
+                }
+            }
+            
+            // Копируем обработанную маску обратно
+            for (let i = 0; i < logoMask.length; i++) {
+                logoMask[i] = tempMask[i];
+            }
+            
+            logoLoaded = true;
+            console.log("Логотип загружен и маска создана");
+        }
+
+        // Получение цвета градиента
+        function getGradientColor(position) {
+            // position от 0 до 1
+            const segmentCount = gradientColors.length - 1;
+            const segmentPosition = position * segmentCount;
+            const segmentIndex = Math.floor(segmentPosition);
+            const segmentOffset = segmentPosition - segmentIndex;
+            
+            // Получаем два ближайших цвета для интерполяции
+            const color1 = gradientColors[segmentIndex];
+            const color2 = gradientColors[Math.min(segmentIndex + 1, gradientColors.length - 1)];
+            
+            // Интерполяция между цветами
+            const r = Math.round(color1[0] + segmentOffset * (color2[0] - color1[0]));
+            const g = Math.round(color1[1] + segmentOffset * (color2[1] - color1[1]));
+            const b = Math.round(color1[2] + segmentOffset * (color2[2] - color1[2]));
+            
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Инициализация капель дождя
+        function initDrops() {
+            drops = [];
+
+            // Создаем много капель для высокой плотности
+            for (let i = 0; i < columns * 4; i++) {
+                drops.push(Math.floor(Math.random() * rows));
+            }
+        }
+
+        // Создание и загрузка встроенного SVG логотипа
+        function loadSVGLogo() {
+            // Используем точно такой же SVG логотип, который предоставил пользователь
+            const svgLogo = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   version="1.1"
+   id="svg1"
+   width="2238.8445"
+   height="1999.7755"
+   viewBox="0 0 2238.8445 1999.7755"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <filter
+       style="color-interpolation-filters:sRGB"
+       id="filter2"
+       x="0"
+       y="0"
+       width="1"
+       height="1">
+      <feColorMatrix
+         type="hueRotate"
+         values="180"
+         result="color1"
+         id="feColorMatrix1" />
+      <feColorMatrix
+         values="-1 0 0 0 1 0 -1 0 0 1 0 0 -1 0 1 -0.21 -0.72 -0.07 2 0 "
+         result="color2"
+         id="feColorMatrix2" />
+    </filter>
+  </defs>
+  <g
+     id="g1"
+     transform="translate(2.9539124,3.4022293)">
+    <path
+       style="fill:#000000;filter:url(#filter2)"
+       d="m 288.97763,1995.8162 c -1.65,-0.1991 -7.5,-1.0922 -13,-1.9847 -5.5,-0.8925 -10.9342,-1.739 -12.0762,-1.8812 -1.1419,-0.1421 -7.2169,-1.7074 -13.5,-3.4785 -52.1557,-14.7017 -96.5871,-46.8096 -126.61113,-91.4941 -7.32726,-10.9051 -102.49684,-176.647 -106.98967,-186.3271 -7.8816197,-16.9814 -13.8780297,-36.3646 -17.9964697,-58.1729 -1.45443,-7.7016 -1.78688,-14.6112 -1.75618,-36.5 0.0354,-25.2228 0.21657,-27.9098 2.75275998,-40.8221 C 3.1972703,1557.863 10.58385,1535.2844 17.71603,1520.3938 c 5.3418,-11.1527 811.4162,-1408.57279 820.4928,-1422.416124 7.8775,-12.01436 16.22,-22.42128 26.6825,-33.28526 32.3451,-33.58644 72.4049,-55.1949904 120.5542,-65.02796039 l 12.5321,-2.55929001 111.99997,-0.3643 c 124.7265,-0.40569 125.1267,-0.38911 151.1433,6.2634 55.3252,14.1467704 102.2542,47.7275604 133.2095,95.3202504 7.7704,11.946804 813.2633,1407.408284 818.8796,1418.653184 9.7878,19.597 16.2586,39.2386 20.4254,62 1.87,10.2146 2.2048,15.7196 2.2505,37 0.047,21.8762 -0.2346,26.6085 -2.2536,37.8731 -4.0988,22.8693 -10.774,43.1812 -20.5701,62.5932 -7.3703,14.605 -97.3221,170.3201 -105.2837,182.2562 -35.2992,52.9204 -94.5605,88.9188 -159.2747,96.7518 -7.8783,0.9536 -1651.64957,1.3143 -1659.52617,0.3642 z M 1934.5155,1888.4828 c 17.6727,-2.0253 34.8744,-7.9637 49.4548,-17.0728 10.3346,-6.4566 24.3954,-19.3365 31.3294,-28.6984 4.2054,-5.6778 97.6336,-166.3653 96.9205,-166.6938 -0.1334,-0.062 -7.4426,0.3018 -16.2426,0.8074 -15.2537,0.8762 -1232.39187,-4.6741 -1262.99997,-5.7595 -9.4948,-0.3367 -15.6962,-1.1535 -23,-3.0294 -33.8284,-8.6885 -60.1128,-34.944 -69.1348,-69.0586 -2.2219,-8.4016 -2.6496,-12.1578 -2.6763,-23.5 -0.035,-15.0219 1.9884,-25.7297 7.1544,-37.8563 1.5566,-3.654 72.1493,-129.5923 156.8726,-279.8628 L 1056.236,984.53941 1000.7752,888.25854 c -30.50327,-52.95447 -55.78747,-96.85794 -56.18697,-97.56326 -0.451,-0.79627 -121.2967,199.16624 -318.7903,527.50002 -174.9352,290.8303 -321.0426,534.043 -324.6831,540.4726 -7.724,13.6414 -10.6372,20.5633 -10.6372,25.2749 0,3.3881 0.01,3.3915 5.75,4.0245 3.1625,0.3484 6.425,0.7786 7.25,0.9559 4.0983,0.881 1623.32237,0.4438 1631.03787,-0.4404 z M 208.52713,1801.9777 c 7.9339,-14.056 2.4071,-4.8603 356.4116,-593 164.862,-273.90002 302.2093,-501.05376 305.2162,-504.78611 8.038,-9.97693 18.1843,-17.96401 30.8227,-24.2632 13.5079,-6.73253 23.5218,-9.36274 38.5,-10.11228 33.2467,-1.66371 65.37047,14.04867 83.72387,40.95091 2.7056,3.96586 73.7026,127.49125 157.771,274.50085 l 152.8517,267.29023 50.5767,-0.6601 c 27.8172,-0.3631 78.3352,-0.9437 112.2624,-1.2902 l 61.6856,-0.6301 -298.4402,-523.50002 c -164.1422,-287.92501 -302.31237,-530.025 -307.04507,-538 -10.3912,-17.51011 -17.2031,-26.90208 -21.2192,-29.25612 l -2.9961,-1.75612 -1.9725,3.25612 c -16.2546,26.83218 -810.57064,1404.46064 -812.948,1409.94294 -1.83332,4.2278 -4.51916,12.1028 -5.96854,17.5 -2.37068,8.828 -2.64084,11.6203 -2.691,27.8132 -0.0617,19.9277 1.22186,27.3796 7.41839,43.0679 3.77325,9.553 87.99375,155.842 89.07395,154.7194 0.4167,-0.433 3.5516,-5.7373 6.9665,-11.7873 z M 2102.2232,1568.4748 c 3.985,-0.5176 8.6019,-1.6426 10.2597,-2.4999 l 3.0143,-1.5587 -1.6579,-3.2192 c -6.6246,-12.8638 -810.6616,-1404.63014 -814.4086,-1409.71932 -6.1588,-8.36482 -19.6842,-21.46494 -27.819,-26.94415 -13.8111,-9.30255 -29.8379,-15.79885 -45.7329,-18.53741 -7.6478,-1.31764 -22.1677,-1.49732 -103.1153,-1.27601 l -94.2141,0.25757 8.8603,13.5 c 4.8732,7.425 16.0386,26.1 24.8119,41.5 475.1533,834.04544 603.2666,1059.43682 605.9392,1066.03652 4.9508,12.2254 6.5891,21.1229 6.622,35.9635 0.022,10.0025 -0.4679,15.0232 -2.1252,21.7743 -5.1336,20.9117 -16.5949,39.475 -32.311,52.3329 -15.0209,12.289 -32.3576,19.5007 -51.4079,21.3843 -9.2765,0.9173 -539.4494,7.0844 -603.98637,7.0258 l -19.0253,-0.017 -55.6115,98.75 c -30.5864,54.3125 -55.4001,98.975 -55.1417,99.25 0.5369,0.5714 1031.96517,6.6547 1157.30377,6.8257 46.5082,0.063 85.661,-0.298 89.7456,-0.8286 z m -976.2456,-313.5646 c 45.65,-0.3354 83.1201,-0.7276 83.2669,-0.8714 0.2973,-0.2914 -89.4876,-157.6444 -90.5979,-158.7776 -0.623,-0.6359 -91.169,158.9227 -91.169,160.6564 0,0.3837 3.4875,0.4512 7.75,0.15 4.2625,-0.3011 45.1,-0.8219 90.75,-1.1574 z"
+       id="path1" />
+  </g>
+</svg>`;
+            
+            // Конвертируем SVG в Data URL
+            const svgBlob = new Blob([svgLogo], {type: 'image/svg+xml'});
+            const svgUrl = URL.createObjectURL(svgBlob);
+            
+            // Загружаем SVG и создаем маску
+            const tempImg = new Image();
+            tempImg.onload = function() {
+                createMaskFromImage(tempImg);
+                URL.revokeObjectURL(svgUrl); // Освобождаем память
+            };
+            tempImg.onerror = function() {
+                console.error("Не удалось загрузить SVG логотип");
+                logoLoaded = false;
+            };
+            tempImg.src = svgUrl;
+        }
+
+        // Главная функция анимации
+        function animate(currentTime) {
+            // Ограничиваем частоту кадров
+            if (currentTime - lastFrameTime < 1000 / frameRate) {
+                requestAnimationFrame(animate);
+                return;
+            }
+
+            lastFrameTime = currentTime;
+
+            // Затемнение фона для эффекта следа
+            matrixCtx.fillStyle = "rgba(0, 0, 0, 0.07)"; // Более быстрое затухание
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+
+            // Рисуем матричный дождь
+            drawMatrixRain();
+
+            // Продолжаем анимацию
+            requestAnimationFrame(animate);
+        }
+
+        // Отрисовка матричного дождя
+        function drawMatrixRain() {
+            // Фоновые символы с низкой непрозрачностью
+            for (let i = 0; i < columns; i++) {
+                for (let j = 0; j < rows; j++) {
+                    // Рисуем символ с вероятностью 5%
+                    if (Math.random() > 0.95) {
+                        const symbol = symbolArray[Math.floor(Math.random() * symbolArray.length)];
+                        const isInLogo = logoLoaded && logoMask[j * columns + i] === 1;
+
+                        if (isInLogo) {
+                            // Бирюзово-голубой градиент для логотипа
+                            const gradientColor = getGradientColor(j / rows);
+                            matrixCtx.fillStyle = gradientColor;
+                            matrixCtx.font = `bold ${fontSize}px monospace`;
+                        } else {
+                            // ЗДЕСЬ ИЗМЕНЕН ЦВЕТ ФОНА С ЗЕЛЕНОГО НА СЕРЫЙ
+                            matrixCtx.fillStyle = backgroundRainColor;
+                            matrixCtx.font = `${fontSize}px monospace`;
+                        }
+
+                        matrixCtx.fillText(symbol, i * fontSize, j * fontSize);
+                    }
+                }
+            }
+
+            // Основные капли дождя
+            for (let idx = 0; idx < drops.length; idx++) {
+                const i = idx % columns; // Колонка
+                const dropY = Math.floor(drops[idx]); // Текущая Y-позиция капли
+                
+                // Проверяем, находится ли капля в области логотипа
+                const isInLogo = logoLoaded && dropY < rows && logoMask[dropY * columns + i] === 1;
+
+                // Выбираем случайный символ
+                const symbol = symbolArray[Math.floor(Math.random() * symbolArray.length)];
+                
+                // Настраиваем стиль в зависимости от положения
+                if (isInLogo) {
+                    // Для логотипа используем бирюзово-голубой градиент
+                    const gradientPos = dropY / rows;
+                    matrixCtx.fillStyle = getGradientColor(gradientPos);
+                    matrixCtx.font = `bold ${fontSize + 2}px monospace`; // Увеличенный размер для логотипа
+                } else {
+                    // ЗДЕСЬ ТОЖЕ ИЗМЕНЕН ЦВЕТ С ЗЕЛЕНОГО НА СЕРЫЙ
+                    matrixCtx.fillStyle = backgroundRainColorFull;
+                    matrixCtx.font = `${fontSize}px monospace`;
+                }
+
+                // Рисуем символ
+                matrixCtx.fillText(symbol, i * fontSize, dropY * fontSize);
+
+                // Сбрасываем каплю, если она достигла низа
+                if (dropY * fontSize > matrixCanvas.height && Math.random() > 0.95) {
+                    drops[idx] = 0;
+                } else {
+                    // Увеличиваем скорость для капель в области логотипа
+                    drops[idx] += isInLogo ? 0.5 : 1.5; // Капли в логотипе движутся медленнее
+                }
+            }
+            
+            // Добавляем больше капель в области логотипа для лучшей видимости
+            if (logoLoaded && Math.random() > 0.7) {
+                // Собираем список всех позиций в маске
+                let logoPositions = [];
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < columns; x++) {
+                        if (logoMask[y * columns + x] === 1) {
+                            logoPositions.push({x, y});
+                        }
+                    }
+                }
+                
+                // Если найдены позиции логотипа
+                if (logoPositions.length > 0) {
+                    // Выбираем случайную точку в логотипе
+                    const pos = logoPositions[Math.floor(Math.random() * logoPositions.length)];
+                    
+                    // Находим ближайшую каплю в этой колонке
+                    let closestDropIdx = -1;
+                    let minDistance = rows;
+                    
+                    for (let idx = 0; idx < drops.length; idx++) {
+                        if (idx % columns === pos.x) {
+                            const distance = Math.abs(drops[idx] - pos.y);
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                closestDropIdx = idx;
+                            }
+                        }
+                    }
+                    
+                    // Если расстояние больше порогового, добавляем новую каплю
+                    if (minDistance > 5 && closestDropIdx !== -1) {
+                        // Устанавливаем каплю сверху логотипа
+                        drops[closestDropIdx] = Math.max(0, pos.y - Math.random() * 5);
+                    }
+                }
+            }
+        }
+
+        // Инициализация
+        function init() {
+            // Инициализируем капли дождя
+            initDrops();
+            
+            // Загружаем логотип
+            loadSVGLogo();
+            
+            // Начинаем анимацию
+            requestAnimationFrame(animate);
+        }
+
+        // Обработка изменения размеров окна
+        window.addEventListener('resize', () => {
+            // Обновляем размеры холстов
+            resizeCanvases();
+            
+            // Обновляем количество колонок и строк
+            columns = Math.floor(matrixCanvas.width / fontSize);
+            rows = Math.floor(matrixCanvas.height / fontSize);
+            
+            // Инициализируем новые капли дождя
+            initDrops();
+            
+            // Перезагружаем логотип
+            loadSVGLogo();
+        });
+
+        // Запускаем инициализацию после загрузки страницы
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
